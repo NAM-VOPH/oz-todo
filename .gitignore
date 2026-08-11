@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.oz-secrets/
+datakey.txt
+.DS_Store
