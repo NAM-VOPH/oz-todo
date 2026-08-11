@@ -238,6 +238,8 @@ def main():
     ap.add_argument("--prodeje", required=True)
     ap.add_argument("--out", default="data/customers.json")
     ap.add_argument("--overrides", default="data/overrides.json")
+    ap.add_argument("--previous", default=None,
+                    help="predchozi customers.json - zachova prirazeni OZ")
     a = ap.parse_args()
 
     today = datetime.now()
@@ -246,10 +248,16 @@ def main():
         with open(a.overrides, encoding="utf-8") as f:
             overrides = json.load(f).get("obchodni_zastupce", {})
 
+    # predchozi verze databaze - drzi prirazeni obchodniho zastupce
+    previous = {}
+    if a.previous and os.path.exists(a.previous):
+        with open(a.previous, encoding="utf-8") as f:
+            previous = {c["id"]: c for c in json.load(f).get("customers", [])}
+
     odb = read_odberatele(a.odberatele)
     sales = read_prodeje(a.prodeje)
 
-    customers, warn_psc = [], []
+    customers, warn_psc, warn_oz = [], [], []
     for o in odb:
         s = sales.get(o["ico"], {})
         c = dict(o)
@@ -267,10 +275,18 @@ def main():
         c["priorita_text"] = GROUPS[c["skupina"]][2]
         c["termin_do"], c["po_terminu_dni"] = deadline(c, today)
 
-        auto_oz = "AHUY" if c["kraj"] in AHUY_KRAJE else "NAM"
-        c["oz_auto"] = auto_oz
-        c["obchodni_zastupce"] = overrides.get(c["id"], auto_oz)
+        # --- obchodni zastupce ------------------------------------------
+        # Pravidlo podle kraje se pouzije POUZE u zakaznika, ktery jeste
+        # v databazi nebyl. U znameho zakaznika se drzi drivejsi prirazeni,
+        # i kdyby se mu zmenila adresa. Menit smi jen NAM (overrides.json).
+        c["oz_kraj"] = "AHUY" if c["kraj"] in AHUY_KRAJE else "NAM"
+        prev = previous.get(c["id"])
+        c["oz_auto"] = prev.get("oz_auto", c["oz_kraj"]) if prev else c["oz_kraj"]
+        c["obchodni_zastupce"] = overrides.get(c["id"], c["oz_auto"])
         c["oz_rucne"] = c["id"] in overrides
+        c["oz_novy"] = prev is None
+        if prev and c["oz_kraj"] != c["oz_auto"]:
+            warn_oz.append((c["firma"], c["okres"], c["oz_auto"], c["oz_kraj"]))
 
         # pole pro fulltext vyhledavani (bez diakritiky)
         c["_search"] = strip_diac(" ".join([
@@ -309,10 +325,18 @@ def main():
     for k, v in sorted(Counter(c["skupina_label"] for c in customers).items()):
         print("  %-24s %d" % (k, v))
     print("  OZ:", dict(Counter(c["obchodni_zastupce"] for c in customers)))
+    novi = [c for c in customers if c.get("oz_novy")]
+    if previous:
+        print("  OZ prirazen automaticky jen novym zakaznikum: %d" % len(novi))
     if warn_psc:
         print("!! Nerozpoznane PSC (%d):" % len(warn_psc))
         for w in warn_psc[:30]:
             print("   ", w)
+    if warn_oz:
+        print("i  Zakaznici, kde by pravidlo podle kraje dalo jineho OZ (NEMENENO,")
+        print("   zmenit muze jen NAM na webu) - %d:" % len(warn_oz))
+        for f, ok, drzi, kraj in warn_oz[:30]:
+            print("    %-38s %-20s drzi=%-5s kraj by dal=%s" % (f[:38], ok, drzi, kraj))
 
 
 if __name__ == "__main__":

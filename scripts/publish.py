@@ -12,7 +12,7 @@ Co dela:
 
 Pouziti:
   export GITHUB_TOKEN=github_pat_...
-  python3 scripts/publish.py --owner yamem102 --repo oz-todo \
+  python3 scripts/publish.py --owner NAM-VOPH --repo oz-todo \
       --datakey "/cesta/.oz-secrets/datakey.txt" \
       --odberatele "/cesta/data odberatele.xlsx" --prodeje "/cesta/data prodeje.xlsx"
 
@@ -95,11 +95,20 @@ def main():
     with open(ov_path, "w", encoding="utf-8") as f:
         json.dump({"obchodni_zastupce": overrides}, f, ensure_ascii=False)
 
+    # predchozi databaze -> zachova prirazeni obchodniho zastupce
+    prev_path = os.path.join(tmp, "previous.json")
+    if old:
+        with open(prev_path, "w", encoding="utf-8") as f:
+            json.dump(old, f, ensure_ascii=False)
+
     # 2) prepocitat ---------------------------------------------------------
     out = os.path.join(tmp, "customers.json")
-    subprocess.run([sys.executable, os.path.join(here, "build_db.py"),
-                    "--odberatele", a.odberatele, "--prodeje", a.prodeje,
-                    "--out", out, "--overrides", ov_path], check=True)
+    cmd = [sys.executable, os.path.join(here, "build_db.py"),
+           "--odberatele", a.odberatele, "--prodeje", a.prodeje,
+           "--out", out, "--overrides", ov_path]
+    if old:
+        cmd += ["--previous", prev_path]
+    subprocess.run(cmd, check=True)
     new = json.load(open(out, encoding="utf-8"))
 
     # 3) souhrn -------------------------------------------------------------
