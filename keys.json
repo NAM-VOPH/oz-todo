@@ -1,0 +1,25 @@
+{
+ "v": 1,
+ "kdf": "PBKDF2-SHA256",
+ "iters": 600000,
+ "users": {
+  "NAM": {
+   "role": "admin",
+   "salt": "PviIXNyPbMkahtu2FVsnmQ==",
+   "wrapped": {
+    "v": 1,
+    "iv": "oH7bWcu5A8I5j5Fd",
+    "ct": "vouXea88Z/8L0Zv0zUn92vI0gkZfc62HG/YfTjfc9qmcmfrBVeq1rIuQ37LhtwHY"
+   }
+  },
+  "AHUY": {
+   "role": "oz",
+   "salt": "Tid9gd/xruC2nAkf8gOeZg==",
+   "wrapped": {
+    "v": 1,
+    "iv": "uOz27HxOCB8T59E4",
+    "ct": "q9cNWm3QgnwgrbQKefko2UG32quRtr8WMiMJi2YXmvh0Q5BPrh+neRmVu/J8QaMd"
+   }
+  }
+ }
+}

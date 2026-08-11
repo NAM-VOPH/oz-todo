@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OZ TODO — MujOneShop</title>
+<style>
+:root{
+  --bg:#0f1419; --panel:#171d26; --panel2:#1e2632; --line:#2b3644;
+  --tx:#e6edf3; --tx2:#93a1b1; --acc:#3b82f6; --ok:#22c55e; --warn:#f59e0b;
+  --dang:#ef4444; --p1:#ef4444; --p2:#f59e0b; --p3:#8b5cf6; --p4:#3b82f6;
+  --p5:#64748b; --p6:#475569;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--tx);padding:6px 12px}
+button:hover{background:#28323f}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.primary:hover{filter:brightness(1.1)}
+button.ok{background:var(--ok);border-color:var(--ok);color:#07240f}
+button.danger{background:var(--dang);border-color:var(--dang);color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{font:inherit;background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:6px 9px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+a{color:var(--acc)}
+
+/* ---------- login ---------- */
+#login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(1200px 600px at 50% -10%,#1b2735,#0f1419);z-index:100}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px 30px;width:340px;box-shadow:0 20px 60px #0008}
+.card h1{margin:0 0 4px;font-size:20px}
+.card p{margin:0 0 18px;color:var(--tx2);font-size:13px}
+.card label{display:block;font-size:12px;color:var(--tx2);margin:12px 0 5px}
+.card input,.card select{width:100%}
+#loginErr{color:var(--dang);font-size:13px;min-height:18px;margin-top:8px}
+
+/* ---------- layout ---------- */
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;position:sticky;top:0;z-index:30}
+header .brand{font-weight:700;letter-spacing:.5px}
+header .sp{flex:1}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.tabs{display:flex;gap:6px;padding:10px 16px 0;background:var(--panel);flex-wrap:wrap}
+.tabs button{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:none;background:transparent}
+.tabs button.active{background:var(--bg);border-color:var(--line);color:#fff;font-weight:600}
+.toolbar{display:flex;gap:8px;align-items:center;padding:12px 16px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.toolbar input[type=search]{min-width:260px;flex:1;max-width:460px}
+main{padding:0 0 60px}
+.wrap{overflow:auto;max-height:calc(100vh - 210px)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+thead th{position:sticky;top:0;background:var(--panel2);z-index:5;white-space:nowrap;font-size:12px;color:var(--tx2);cursor:pointer;user-select:none}
+thead th:hover{color:#fff}
+tbody tr:hover{background:#1a2331}
+tr.hl{background:#1e3a5f !important;box-shadow:inset 3px 0 0 var(--acc)}
+td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.muted{color:var(--tx2)}
+.nowrap{white-space:nowrap}
+.small{font-size:11px}
+.cellbox{min-width:200px;max-width:340px;border:1px dashed transparent;border-radius:6px;padding:3px 5px;cursor:text}
+.cellbox:hover{border-color:var(--line);background:#141b25}
+.cellbox.empty{color:#4a5665;font-style:italic}
+.ed{width:100%;min-height:70px;resize:vertical}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.chip{background:#243040;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:11px}
+.stat{color:var(--tx2);font-size:12px}
+.pill{padding:1px 7px;border-radius:5px;font-size:11px;font-weight:600}
+.overdue{color:var(--dang);font-weight:700}
+#toast{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;z-index:200}
+.tmsg{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);padding:9px 14px;border-radius:8px;box-shadow:0 8px 24px #0008;max-width:360px}
+.tmsg.err{border-left-color:var(--dang)}
+.tmsg.ok{border-left-color:var(--ok)}
+dialog{background:var(--panel);color:var(--tx);border:1px solid var(--line);border-radius:12px;padding:22px;max-width:560px;width:92%}
+dialog::backdrop{background:#000a}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.g{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:13px}
+.g div:nth-child(odd){color:var(--tx2)}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+
+<!-- ============================ LOGIN ============================ -->
+<div id="login">
+  <div class="card">
+    <h1>OZ TODO</h1>
+    <p>Đăng nhập để xem danh sách khách hàng</p>
+    <label>Người dùng</label>
+    <select id="lgUser"></select>
+    <label>PIN</label>
+    <input id="lgPin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="••••">
+    <div id="loginErr"></div>
+    <button class="primary" id="lgBtn" style="width:100%;margin-top:14px;padding:9px">Đăng nhập</button>
+  </div>
+</div>
+
+<!-- ============================ APP ============================ -->
+<div id="app" class="hidden">
+<header>
+  <span class="brand">OZ&nbsp;TODO</span>
+  <span class="badge" id="hUser" style="background:#243040"></span>
+  <span class="stat" id="hStat"></span>
+  <span class="sp"></span>
+  <span class="stat" id="syncStat"></span>
+  <button id="btnSync">⟳ Aktualizovat</button>
+  <button id="btnToken">🔑 Token</button>
+  <button id="btnLogout">Odhlásit</button>
+</header>
+
+<div class="tabs">
+  <button data-tab="cust" class="active">Danh sách khách hàng</button>
+  <button data-tab="rekl">Khiếu nại <span id="cRekl" class="badge" style="background:var(--dang);color:#fff">0</span></button>
+  <button data-tab="pozn">Ghi chú <span id="cPozn" class="badge" style="background:var(--warn);color:#3a2500">0</span></button>
+  <button data-tab="done">Đã hoàn thành <span id="cDone" class="badge" style="background:var(--p5);color:#fff">0</span></button>
+</div>
+
+<main>
+  <!-- --------- TAB: KHACH HANG --------- -->
+  <section id="tab-cust">
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Tìm: tên công ty, IČO, điện thoại, email, địa chỉ, okres, ngày mua, ghi chú, khiếu nại…">
+      <select id="fGroup"><option value="">— Tất cả nhóm —</option></select>
+      <select id="fOkres"><option value="">— Tất cả okres —</option></select>
+      <select id="fOz" class="hidden"><option value="">— Tất cả OZ —</option><option>NAM</option><option>AHUY</option></select>
+      <select id="fFlag">
+        <option value="">— Tất cả —</option>
+        <option value="over">Quá hạn thăm</option>
+        <option value="rekl">Có khiếu nại</option>
+        <option value="pozn">Có ghi chú</option>
+      </select>
+      <select id="sortSel">
+        <option value="priorita">Sắp xếp: Mức ưu tiên</option>
+        <option value="skupina">Sắp xếp: Nhóm khách</option>
+        <option value="okres">Sắp xếp: Okres</option>
+        <option value="posledni_nakup">Sắp xếp: Ngày mua gần nhất</option>
+        <option value="obrat_celkem">Sắp xếp: Tổng tiền hàng</option>
+        <option value="pocet_objednavek">Sắp xếp: Số đơn</option>
+        <option value="firma">Sắp xếp: Tên công ty</option>
+      </select>
+      <button id="btnClear">Xóa lọc</button>
+      <span class="stat" id="custCount"></span>
+    </div>
+    <div class="wrap"><table id="tCust">
+      <thead><tr>
+        <th data-s="priorita">Ưu tiên</th>
+        <th data-s="firma">Công ty</th>
+        <th data-s="skupina">Nhóm</th>
+        <th data-s="ico">IČO</th>
+        <th data-s="telefon">Liên hệ</th>
+        <th data-s="okres">Địa chỉ / Okres</th>
+        <th data-s="pocet_objednavek">Đơn</th>
+        <th data-s="obrat_celkem">Tổng tiền</th>
+        <th data-s="prvni_nakup">Mua đầu</th>
+        <th data-s="posledni_nakup">Mua cuối</th>
+        <th data-s="termin_do">Hạn thăm</th>
+        <th data-s="obchodni_zastupce">OZ</th>
+        <th>Ghi chú</th>
+        <th>Khiếu nại</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <!-- --------- TAB: REKLAMACE --------- -->
+  <section id="tab-rekl" class="hidden">
+    <div class="toolbar">
+      <input type="search" id="qR" placeholder="Tìm trong khiếu nại…">
+      <span class="stat">Bấm vào dòng để lọc khách hàng đó trong danh sách.</span>
+    </div>
+    <div class="wrap"><table id="tRekl">
+      <thead><tr><th>Công ty</th><th>IČO</th><th>Nội dung khiếu nại</th><th>File</th><th>Ngày nhập</th><th>Người nhập</th><th>Sửa cuối</th><th></th></tr></thead>
+      <tbody></tbody></table></div>
+  </section>
+
+  <!-- --------- TAB: POZNAMKY --------- -->
+  <section id="tab-pozn" class="hidden">
+    <div class="toolbar">
+      <input type="search" id="qP" placeholder="Tìm trong ghi chú…">
+      <span class="stat">Bấm vào dòng để lọc khách hàng đó trong danh sách.</span>
+    </div>
+    <div class="wrap"><table id="tPozn">
+      <thead><tr><th>Công ty</th><th>IČO</th><th>Ghi chú</th><th>File</th><th>Ngày nhập</th><th>Người nhập</th><th>Sửa cuối</th><th></th></tr></thead>
+      <tbody></tbody></table></div>
+  </section>
+
+  <!-- --------- TAB: HOTOVO --------- -->
+  <section id="tab-done" class="hidden">
+    <div class="toolbar">
+      <input type="search" id="qD" placeholder="Tìm trong việc đã hoàn thành…">
+      <select id="fDType"><option value="">— Cả hai loại —</option><option value="rekl">Khiếu nại</option><option value="pozn">Ghi chú</option></select>
+      <label class="stat">Từ <input type="date" id="dFrom"></label>
+      <label class="stat">Đến <input type="date" id="dTo"></label>
+      <button id="btnExport">⬇ Export CSV</button>
+      <span class="stat" id="doneCount"></span>
+    </div>
+    <div class="wrap"><table id="tDone">
+      <thead><tr><th>Công ty</th><th>IČO</th><th>Loại</th><th>Nội dung</th><th>File</th><th>Ngày tạo</th><th>Người tạo</th><th>Ngày hoàn thành</th><th>Người hoàn thành</th></tr></thead>
+      <tbody></tbody></table></div>
+  </section>
+</main>
+</div>
+
+<div id="toast"></div>
+
+<dialog id="dlgToken">
+  <h3 style="margin:0 0 6px">GitHub token</h3>
+  <p class="muted small" style="margin:0 0 14px">Cần token để lưu ghi chú / khiếu nại lên GitHub. Token chỉ lưu trong trình duyệt này.<br>
+  Tạo tại <b>github.com → Settings → Developer settings → Personal access tokens → Fine-grained</b>, chọn đúng repo, quyền <b>Contents: Read and write</b>.</p>
+  <input id="tokIn" type="password" placeholder="github_pat_…" style="width:100%">
+  <div class="row" style="margin-top:14px;justify-content:flex-end">
+    <button id="tokDel">Xóa token</button>
+    <button onclick="document.getElementById('dlgToken').close()">Đóng</button>
+    <button class="primary" id="tokSave">Lưu</button>
+  </div>
+</dialog>
+
+<dialog id="dlgDetail"><div id="detailBody"></div>
+  <div class="row" style="margin-top:16px;justify-content:flex-end"><button onclick="document.getElementById('dlgDetail').close()">Đóng</button></div>
+</dialog>
+
+<script src="config.js"></script>
+<script>
+"use strict";
+const CFG = window.OZ_CONFIG;
+const API = "https://api.github.com";
+const PATHS = { tasks:"data/tasks.json", done:"data/completed.json", ovr:"data/overrides.json" };
+
+/* ===================== helpers ===================== */
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nodia = s => String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const czk = n => (n||0).toLocaleString("cs-CZ",{maximumFractionDigits:0})+" Kč";
+const nowISO = () => new Date().toISOString();
+const fmtDT = s => s ? new Date(s).toLocaleString("cs-CZ",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "";
+const fmtD  = s => s ? new Date(s).toLocaleDateString("cs-CZ") : "";
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+
+function bytes2b64(bytes){
+  let bin=""; for(let i=0;i<bytes.length;i+=8192) bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));
+  return btoa(bin);
+}
+const b642bytes = b64 => Uint8Array.from(atob(String(b64).replace(/\s/g,"")), c=>c.charCodeAt(0));
+const b64enc = str => bytes2b64(new TextEncoder().encode(str));
+const b64dec = b64 => new TextDecoder().decode(b642bytes(b64));
+
+/* ---------- šifrování (musí sedět se scripts/ozcrypto.py) ---------- */
+async function deriveKEK(pin, saltB64, iters){
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {name:"PBKDF2", salt:b642bytes(saltB64), iterations:iters, hash:"SHA-256"},
+    base, {name:"AES-GCM", length:256}, false, ["decrypt"]);
+}
+async function aesDec(blob, key){
+  const pt = await crypto.subtle.decrypt({name:"AES-GCM", iv:b642bytes(blob.iv)}, key, b642bytes(blob.ct));
+  return new Uint8Array(pt);
+}
+async function aesEnc(bytes, key){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, bytes);
+  return {v:1, iv:bytes2b64(iv), ct:bytes2b64(new Uint8Array(ct))};
+}
+const encJSON = async (obj,key) => aesEnc(new TextEncoder().encode(JSON.stringify(obj)), key);
+const decJSON = async (blob,key) => JSON.parse(new TextDecoder().decode(await aesDec(blob,key)));
+function toast(msg, kind){
+  const d=document.createElement("div"); d.className="tmsg "+(kind||""); d.textContent=msg;
+  $("#toast").appendChild(d); setTimeout(()=>d.remove(), kind==="err"?9000:4000);
+}
+
+/* ===================== stav ===================== */
+const S = {
+  user:null, token:null, key:null, keys:null,
+  customers:[], tasks:[], done:[], overrides:{},
+  sha:{}, dirty:false, timer:null, syncing:false,
+  sort:"priorita", dir:1, highlight:null
+};
+const GROUP_COLOR = {1:"var(--p1)",2:"var(--p2)",3:"var(--p3)",4:"var(--p4)",5:"var(--p5)",6:"var(--p6)"};
+
+/* ===================== login ===================== */
+$("#lgBtn").onclick = doLogin;
+$("#lgPin").onkeydown = e => { if(e.key==="Enter") doLogin(); };
+
+(async function initLogin(){
+  try{
+    S.keys = await fetch("./keys.json?t="+Date.now(),{cache:"no-store"}).then(r=>r.json());
+    Object.keys(S.keys.users).forEach(n=>{
+      const o=document.createElement("option"); o.textContent=n; $("#lgUser").appendChild(o); });
+    const last = sessionStorage.getItem("oz_user"); if(last) $("#lgUser").value=last;
+  }catch(e){ $("#loginErr").textContent="Không tải được keys.json — kiểm tra cài đặt."; }
+  $("#lgPin").focus();
+})();
+
+async function doLogin(){
+  const name = $("#lgUser").value, pin = $("#lgPin").value.trim();
+  const u = S.keys && S.keys.users[name];
+  if(!u){ $("#loginErr").textContent="Người dùng không tồn tại."; return; }
+  $("#loginErr").textContent="Đang mở khóa…"; $("#lgBtn").disabled=true;
+  try{
+    const kek = await deriveKEK(pin, u.salt, S.keys.iters);
+    const raw = await aesDec(u.wrapped, kek);                      // sai PIN -> vyjimka
+    S.key  = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt","decrypt"]);
+    S.user = {name, role:u.role};
+  }catch(e){ $("#loginErr").textContent="Sai PIN."; $("#lgBtn").disabled=false; return; }
+  $("#lgBtn").disabled=false; $("#loginErr").textContent="";
+  sessionStorage.setItem("oz_user", name);
+  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
+  $("#hUser").textContent = S.user.name + (S.user.role==="admin" ? " (admin)" : " (OZ)");
+  if(S.user.role==="admin") $("#fOz").classList.remove("hidden");
+  S.token = localStorage.getItem("oz_token") || null;
+  await loadAll();
+}
+$("#btnLogout").onclick = ()=>{ sessionStorage.removeItem("oz_user"); location.reload(); };
+
+/* ===================== token ===================== */
+$("#btnToken").onclick = ()=>{ $("#tokIn").value = S.token||""; $("#dlgToken").showModal(); };
+$("#tokSave").onclick = ()=>{
+  const t=$("#tokIn").value.trim();
+  if(t){ localStorage.setItem("oz_token",t); S.token=t; toast("Đã lưu token.","ok"); }
+  $("#dlgToken").close(); renderSyncStat();
+};
+$("#tokDel").onclick = ()=>{ localStorage.removeItem("oz_token"); S.token=null; $("#dlgToken").close(); renderSyncStat(); };
+
+/* ===================== načítání dat ===================== */
+/* Vše v data/ je zašifrované AES-GCM; ghGet dešifruje, ghPut zašifruje. */
+async function ghGet(path){
+  let blob, sha=null;
+  if(S.token){
+    const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}?ref=${CFG.BRANCH}`,
+      {headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json"},cache:"no-store"});
+    if(r.status===404) return {data:null, sha:null};
+    if(!r.ok) throw new Error(`GitHub GET ${path}: ${r.status}`);
+    const j = await r.json(); sha = j.sha; blob = JSON.parse(b64dec(j.content));
+  }else{
+    const r = await fetch("./"+path+"?t="+Date.now(),{cache:"no-store"});
+    if(!r.ok) throw new Error(`fetch ${path}: ${r.status}`);
+    blob = await r.json();
+  }
+  const data = (blob && blob.v===1 && blob.ct) ? await decJSON(blob, S.key) : blob;
+  return {data, sha};
+}
+
+async function ghPut(path, obj, msg){
+  const enc = await encJSON(obj, S.key);
+  const body = {message:msg, content:b64enc(JSON.stringify(enc)), branch:CFG.BRANCH};
+  if(S.sha[path]) body.sha = S.sha[path];
+  const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}`,{
+    method:"PUT", headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json",
+    "Content-Type":"application/json"}, body:JSON.stringify(body)});
+  if(!r.ok) throw new Error(`GitHub PUT ${path}: ${r.status} ${await r.text()}`);
+  S.sha[path] = (await r.json()).content.sha;
+}
+
+async function ghPutBinary(path, base64, msg){
+  const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}`,{
+    method:"PUT", headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json",
+    "Content-Type":"application/json"},
+    body:JSON.stringify({message:msg, content:base64, branch:CFG.BRANCH})});
+  if(!r.ok) throw new Error(`upload: ${r.status}`);
+  return (await r.json()).content.download_url;
+}
+
+async function loadAll(){
+  try{
+    const cRaw = await fetch("./data/customers.json?t="+Date.now(),{cache:"no-store"}).then(r=>r.json());
+    const c = (cRaw && cRaw.v===1 && cRaw.ct) ? await decJSON(cRaw, S.key) : cRaw;
+    S.customers = c.customers;
+    $("#hStat").textContent = `${c.pocet_zakazniku} khách · dữ liệu ${fmtDT(c.generated_at)}`;
+    const [t,dn,ov] = await Promise.all([ghGet(PATHS.tasks), ghGet(PATHS.done), ghGet(PATHS.ovr)]);
+    S.tasks = (t.data&&t.data.tasks)||[];  S.sha[PATHS.tasks]=t.sha;
+    S.done  = (dn.data&&dn.data.tasks)||[]; S.sha[PATHS.done]=dn.sha;
+    S.overrides = (ov.data&&ov.data.obchodni_zastupce)||{}; S.sha[PATHS.ovr]=ov.sha;
+    applyOverrides(); buildFilters(); renderAll();
+    toast("Đã tải dữ liệu.","ok");
+  }catch(e){ toast("Lỗi tải dữ liệu: "+e.message,"err"); console.error(e); }
+}
+function applyOverrides(){
+  S.customers.forEach(c=>{
+    c.obchodni_zastupce = S.overrides[c.id] || c.oz_auto;
+    c.oz_rucne = !!S.overrides[c.id];
+  });
+}
+
+/* ===================== ukládání (sync) ===================== */
+function markDirty(){
+  S.dirty = true; renderSyncStat();
+  clearTimeout(S.timer);
+  S.timer = setTimeout(sync, CFG.AUTOSYNC_MS);
+}
+function renderSyncStat(){
+  const el=$("#syncStat");
+  if(!S.token){ el.innerHTML='<span style="color:var(--warn)">⚠ chưa có token — chỉ đọc</span>'; return; }
+  if(S.syncing) el.textContent="⏳ đang lưu…";
+  else if(S.dirty) el.innerHTML='<span style="color:var(--warn)">● có thay đổi chưa lưu</span>';
+  else el.innerHTML='<span style="color:var(--ok)">✓ đã đồng bộ</span>';
+}
+$("#btnSync").onclick = ()=> S.dirty ? sync() : loadAll();
+
+async function sync(){
+  if(!S.dirty || S.syncing) return;
+  if(!S.token){ toast("Chưa có GitHub token — không thể lưu.","err"); return; }
+  S.syncing = true; renderSyncStat();
+  try{
+    // conflict-safe: znovu načíst, zmergovat podle id a updated_at, teprve pak zapsat
+    const [t,dn,ov] = await Promise.all([ghGet(PATHS.tasks), ghGet(PATHS.done), ghGet(PATHS.ovr)]);
+    S.sha[PATHS.tasks]=t.sha; S.sha[PATHS.done]=dn.sha; S.sha[PATHS.ovr]=ov.sha;
+    S.tasks = mergeById((t.data&&t.data.tasks)||[], S.tasks);
+    S.done  = mergeById((dn.data&&dn.data.tasks)||[], S.done);
+    const doneIds = new Set(S.done.map(x=>x.id));
+    S.tasks = S.tasks.filter(x=>!doneIds.has(x.id) && !x._deleted);
+    S.overrides = Object.assign({}, (ov.data&&ov.data.obchodni_zastupce)||{}, S.overrides);
+
+    const stamp = new Date().toISOString().slice(0,16).replace("T"," ");
+    await ghPut(PATHS.tasks, {updated_at:nowISO(), tasks:S.tasks}, `tasks ${S.user.name} ${stamp}`);
+    await ghPut(PATHS.done,  {updated_at:nowISO(), tasks:S.done},  `hotovo ${S.user.name} ${stamp}`);
+    await ghPut(PATHS.ovr,   {updated_at:nowISO(), obchodni_zastupce:S.overrides}, `oz ${S.user.name} ${stamp}`);
+    S.dirty=false; applyOverrides(); renderAll(); toast("Đã lưu lên GitHub.","ok");
+  }catch(e){
+    toast("Lỗi lưu: "+e.message,"err"); console.error(e);
+    clearTimeout(S.timer); S.timer=setTimeout(sync, 15000);   // zkusit znovu
+  }finally{ S.syncing=false; renderSyncStat(); }
+}
+function mergeById(remote, local){
+  const m = new Map(remote.map(x=>[x.id,x]));
+  local.forEach(l=>{
+    const r = m.get(l.id);
+    if(!r || (l.updated_at||"") >= (r.updated_at||"")) m.set(l.id, l);
+  });
+  return [...m.values()].filter(x=>!x._deleted);
+}
+window.addEventListener("beforeunload", e=>{ if(S.dirty){ e.preventDefault(); e.returnValue=""; } });
+
+/* ===================== operace nad úkoly ===================== */
+function taskOf(custId, type){ return S.tasks.find(t=>t.cust_id===custId && t.type===type); }
+
+function setTask(cust, type, text){
+  text = (text||"").trim();
+  let t = taskOf(cust.id, type);
+  if(!text){
+    if(t){ t._deleted=true; t.updated_at=nowISO(); S.tasks=S.tasks.filter(x=>x!==t); markDirty(); renderAll(); }
+    return;
+  }
+  if(t){
+    if(t.text===text) return;
+    t.text=text; t.updated_at=nowISO(); t.updated_by=S.user.name;
+  }else{
+    S.tasks.push({ id:uid(), cust_id:cust.id, ico:cust.ico, firma:cust.firma, type, text,
+      files:[], created_at:nowISO(), created_by:S.user.name,
+      updated_at:nowISO(), updated_by:S.user.name });
+  }
+  markDirty(); renderAll();
+}
+
+function completeTask(id){
+  const i = S.tasks.findIndex(t=>t.id===id); if(i<0) return;
+  const t = S.tasks.splice(i,1)[0];
+  t.done_at = nowISO(); t.done_by = S.user.name; t.updated_at = nowISO();
+  S.done.unshift(t); markDirty(); renderAll();
+  toast(`Đã hoàn thành: ${t.firma}`,"ok");
+}
+
+async function uploadFile(taskId, file){
+  if(!S.token){ toast("Cần token để upload file.","err"); return; }
+  if(file.size > CFG.MAX_FILE_MB*1024*1024){ toast(`File > ${CFG.MAX_FILE_MB} MB.`,"err"); return; }
+  const t = S.tasks.find(x=>x.id===taskId); if(!t) return;
+  toast("Đang mã hóa và upload "+file.name+"…");
+  try{
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const enc = await aesEnc(buf, S.key);                 // příloha se ukládá zašifrovaná
+    const safe = file.name.replace(/[^\w.\-]/g,"_");
+    const path = `data/files/${taskId}/${Date.now()}_${safe}.enc`;
+    await ghPutBinary(path, b64enc(JSON.stringify(enc)), `příloha ${safe} (${S.user.name})`);
+    t.files = t.files||[]; t.files.push({name:file.name, path, type:file.type||""});
+    t.updated_at=nowISO(); t.updated_by=S.user.name;
+    markDirty(); renderAll(); toast("Đã upload "+file.name,"ok");
+  }catch(e){ toast("Lỗi upload: "+e.message,"err"); }
+}
+
+/* stažení + dešifrování přílohy */
+async function openFile(taskId, idx){
+  const t = S.tasks.concat(S.done).find(x=>x.id===taskId); if(!t) return;
+  const f = (t.files||[])[idx]; if(!f) return;
+  toast("Đang tải "+f.name+"…");
+  try{
+    let blob;
+    if(S.token){
+      const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${f.path}?ref=${CFG.BRANCH}`,
+        {headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json"},cache:"no-store"});
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      blob = JSON.parse(b64dec((await r.json()).content));
+    }else{
+      const u=`https://raw.githubusercontent.com/${CFG.OWNER}/${CFG.REPO}/${CFG.BRANCH}/${f.path}`;
+      const r = await fetch(u+"?t="+Date.now(),{cache:"no-store"});
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      blob = await r.json();
+    }
+    const bytes = await aesDec(blob, S.key);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([bytes], {type:f.type||"application/octet-stream"}));
+    a.download = f.name; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 30000);
+  }catch(e){ toast("Lỗi tải file: "+e.message,"err"); }
+}
+
+/* ===================== filtry / řazení ===================== */
+function visibleCustomers(){
+  let list = S.customers;
+  if(S.user.role!=="admin") list = list.filter(c=>c.obchodni_zastupce===S.user.name);
+  const q = nodia($("#q").value.trim());
+  const g = $("#fGroup").value, o = $("#fOkres").value, oz = $("#fOz").value, fl = $("#fFlag").value;
+  if(g)  list = list.filter(c=>c.skupina_label===g);
+  if(o)  list = list.filter(c=>c.okres===o);
+  if(oz) list = list.filter(c=>c.obchodni_zastupce===oz);
+  if(fl==="over") list = list.filter(c=>c.po_terminu_dni>0);
+  if(fl==="rekl") list = list.filter(c=>taskOf(c.id,"rekl"));
+  if(fl==="pozn") list = list.filter(c=>taskOf(c.id,"pozn"));
+  if(q){
+    const terms = q.split(/\s+/);
+    list = list.filter(c=>{
+      const hay = c._search + " " + nodia((taskOf(c.id,"pozn")||{}).text||"") + " " + nodia((taskOf(c.id,"rekl")||{}).text||"");
+      return terms.every(t=>hay.includes(t));
+    });
+  }
+  const k=S.sort, d=S.dir;
+  return [...list].sort((a,b)=>{
+    let x=a[k], y=b[k];
+    if(k==="priorita") return (a.priorita-b.priorita)*d || (b.po_terminu_dni||0)-(a.po_terminu_dni||0) || b.obrat_celkem-a.obrat_celkem;
+    if(typeof x==="number"||typeof y==="number") return (((y??-1)-(x??-1)))*d;
+    x=nodia(x||"￿"); y=nodia(y||"￿");
+    return x<y?-1*d : x>y?1*d : 0;
+  });
+}
+
+function buildFilters(){
+  const src = S.user.role==="admin" ? S.customers : S.customers.filter(c=>c.obchodni_zastupce===S.user.name);
+  const gs = [...new Set(src.map(c=>c.skupina_label))].sort((a,b)=>
+    (src.find(c=>c.skupina_label===a).priorita)-(src.find(c=>c.skupina_label===b).priorita));
+  $("#fGroup").innerHTML = '<option value="">— Tất cả nhóm —</option>'+gs.map(g=>`<option>${esc(g)}</option>`).join("");
+  const os = [...new Set(src.map(c=>c.okres))].sort((a,b)=>a.localeCompare(b,"cs"));
+  $("#fOkres").innerHTML = '<option value="">— Tất cả okres —</option>'+os.map(o=>`<option>${esc(o)}</option>`).join("");
+}
+
+/* ===================== render ===================== */
+function renderAll(){ renderCust(); renderTasks(); renderDone(); renderSyncStat(); }
+
+function noteCell(c, type){
+  const t = taskOf(c.id, type);
+  const cls = type==="rekl" ? "rekl" : "pozn";
+  if(!t) return `<div class="cellbox empty" data-ed="${c.id}|${type}">+ thêm…</div>`;
+  const files = (t.files||[]).map((f,i)=>`<span class="chip" style="cursor:pointer" data-file="${t.id}|${i}">📎 ${esc(f.name)}</span>`).join("");
+  return `<div class="cellbox" data-ed="${c.id}|${type}">${esc(t.text).replace(/\n/g,"<br>")}</div>
+    <div class="chips">${files}</div>
+    <div class="small muted">${esc(t.updated_by||t.created_by)} · ${fmtDT(t.updated_at||t.created_at)}</div>
+    <div class="row small" style="margin-top:3px">
+      <button class="ok" style="padding:2px 8px;font-size:11px" data-done="${t.id}">Hotovo</button>
+      <label class="chip" style="cursor:pointer">📎 file<input type="file" class="hidden" data-up="${t.id}"></label>
+    </div>`;
+}
+
+function renderCust(){
+  const list = visibleCustomers();
+  $("#custCount").textContent = `${list.length} / ${S.customers.length} khách`;
+  const rows = list.map(c=>{
+    const od = c.po_terminu_dni>0;
+    const ozSel = S.user.role==="admin"
+      ? `<select data-oz="${c.id}" style="padding:2px 4px;font-size:12px">
+           <option ${c.obchodni_zastupce==="NAM"?"selected":""}>NAM</option>
+           <option ${c.obchodni_zastupce==="AHUY"?"selected":""}>AHUY</option>
+         </select>${c.oz_rucne?'<div class="small muted">sửa tay</div>':""}`
+      : esc(c.obchodni_zastupce);
+    return `<tr data-id="${c.id}" class="${S.highlight===c.id?"hl":""}">
+      <td class="nowrap"><span class="pill" style="background:${GROUP_COLOR[c.priorita]};color:#fff">${c.priorita}</span>
+        <div class="small muted">${esc(c.priorita_text)}</div></td>
+      <td><b class="lnk" style="cursor:pointer" data-detail="${c.id}">${esc(c.firma)}</b>
+        ${c.dodaci_nazev?`<div class="small muted">${esc(c.dodaci_nazev)}</div>`:""}</td>
+      <td class="nowrap"><span class="badge" style="background:${GROUP_COLOR[c.priorita]}22;color:${GROUP_COLOR[c.priorita]};border:1px solid ${GROUP_COLOR[c.priorita]}55">${esc(c.skupina_label)}</span></td>
+      <td class="nowrap">${esc(c.ico)}</td>
+      <td class="small">${c.telefon?`<a href="tel:${esc(c.telefon)}">${esc(c.telefon)}</a><br>`:""}${c.email?`<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>`:""}</td>
+      <td class="small" style="max-width:230px">${esc(c.adresa)}<div class="muted"><b>${esc(c.okres)}</b> · ${esc(c.kraj)}</div></td>
+      <td class="num">${c.pocet_objednavek}</td>
+      <td class="num">${czk(c.obrat_celkem)}</td>
+      <td class="num small">${fmtD(c.prvni_nakup)}</td>
+      <td class="num small">${fmtD(c.posledni_nakup)}${c.dni_od_nakupu!=null?`<div class="muted">${c.dni_od_nakupu} ngày</div>`:""}</td>
+      <td class="num small ${od?"overdue":""}">${fmtD(c.termin_do)||"—"}${od?`<div>quá ${c.po_terminu_dni} ngày</div>`:""}</td>
+      <td class="nowrap">${ozSel}</td>
+      <td>${noteCell(c,"pozn")}</td>
+      <td>${noteCell(c,"rekl")}</td>
+    </tr>`;
+  }).join("");
+  $("#tCust tbody").innerHTML = rows || `<tr><td colspan="14" class="muted" style="padding:24px">Không có khách hàng nào khớp bộ lọc.</td></tr>`;
+  if(S.highlight){ const r=$(`#tCust tbody tr[data-id="${S.highlight}"]`); if(r) r.scrollIntoView({block:"center"}); }
+}
+
+function taskRows(type, q){
+  const mine = S.tasks.filter(t=>t.type===type)
+    .filter(t=>{ const c=S.customers.find(x=>x.id===t.cust_id);
+      return S.user.role==="admin" || (c && c.obchodni_zastupce===S.user.name); })
+    .filter(t=>!q || nodia(t.firma+" "+t.ico+" "+t.text).includes(nodia(q)))
+    .sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
+  return mine.map(t=>`<tr data-goto="${t.cust_id}" style="cursor:pointer">
+    <td><b>${esc(t.firma)}</b></td><td class="nowrap">${esc(t.ico)}</td>
+    <td style="max-width:460px">${esc(t.text).replace(/\n/g,"<br>")}</td>
+    <td class="small">${(t.files||[]).map((f,i)=>`<span class="chip" style="cursor:pointer" data-file="${t.id}|${i}">📎 ${esc(f.name)}</span>`).join("<br>")}</td>
+    <td class="nowrap small">${fmtDT(t.created_at)}</td>
+    <td class="small">${esc(t.created_by)}</td>
+    <td class="nowrap small">${t.updated_at!==t.created_at?fmtDT(t.updated_at)+"<br>"+esc(t.updated_by):"—"}</td>
+    <td><button class="ok" style="padding:2px 8px;font-size:11px" data-done="${t.id}">Hotovo</button></td>
+  </tr>`).join("") || `<tr><td colspan="8" class="muted" style="padding:24px">Không có mục nào.</td></tr>`;
+}
+function renderTasks(){
+  $("#tRekl tbody").innerHTML = taskRows("rekl", $("#qR").value);
+  $("#tPozn tbody").innerHTML = taskRows("pozn", $("#qP").value);
+  const vis = t => { const c=S.customers.find(x=>x.id===t.cust_id);
+                     return S.user.role==="admin" || (c && c.obchodni_zastupce===S.user.name); };
+  $("#cRekl").textContent = S.tasks.filter(t=>t.type==="rekl"&&vis(t)).length;
+  $("#cPozn").textContent = S.tasks.filter(t=>t.type==="pozn"&&vis(t)).length;
+}
+
+function doneList(){
+  const q = nodia($("#qD").value), ty=$("#fDType").value, f=$("#dFrom").value, to=$("#dTo").value;
+  return S.done
+    .filter(t=>{ const c=S.customers.find(x=>x.id===t.cust_id);
+      return S.user.role==="admin" || (c && c.obchodni_zastupce===S.user.name); })
+    .filter(t=>!ty || t.type===ty)
+    .filter(t=>!q || nodia(t.firma+" "+t.ico+" "+t.text+" "+t.created_by+" "+t.done_by).includes(q))
+    .filter(t=>!f  || (t.done_at||"") >= f)
+    .filter(t=>!to || (t.done_at||"") <= to+"T23:59:59Z")
+    .sort((a,b)=>(b.done_at||"").localeCompare(a.done_at||""));
+}
+function renderDone(){
+  const list = doneList();
+  $("#cDone").textContent = S.done.length;
+  $("#doneCount").textContent = `${list.length} mục`;
+  $("#tDone tbody").innerHTML = list.map(t=>`<tr>
+    <td><b>${esc(t.firma)}</b></td><td class="nowrap">${esc(t.ico)}</td>
+    <td>${t.type==="rekl"?'<span class="badge" style="background:var(--dang);color:#fff">Khiếu nại</span>':'<span class="badge" style="background:var(--warn);color:#3a2500">Ghi chú</span>'}</td>
+    <td style="max-width:420px">${esc(t.text).replace(/\n/g,"<br>")}</td>
+    <td class="small">${(t.files||[]).map((f,i)=>`<span class="chip" style="cursor:pointer" data-file="${t.id}|${i}">📎 ${esc(f.name)}</span>`).join("<br>")}</td>
+    <td class="nowrap small">${fmtDT(t.created_at)}</td><td class="small">${esc(t.created_by)}</td>
+    <td class="nowrap small">${fmtDT(t.done_at)}</td><td class="small">${esc(t.done_by)}</td>
+  </tr>`).join("") || `<tr><td colspan="9" class="muted" style="padding:24px">Chưa có việc nào hoàn thành.</td></tr>`;
+}
+
+/* ===================== interakce ===================== */
+$$(".tabs button").forEach(b=>b.onclick=()=>{
+  $$(".tabs button").forEach(x=>x.classList.remove("active")); b.classList.add("active");
+  ["cust","rekl","pozn","done"].forEach(t=>$("#tab-"+t).classList.toggle("hidden", t!==b.dataset.tab));
+});
+function gotoTab(name){ $(`.tabs button[data-tab="${name}"]`).click(); }
+
+["#q","#fGroup","#fOkres","#fOz","#fFlag"].forEach(s=>$(s).addEventListener("input",()=>{S.highlight=null;renderCust();}));
+$("#sortSel").addEventListener("change",e=>{ S.sort=e.target.value; S.dir=1; renderCust(); });
+$("#btnClear").onclick=()=>{ $("#q").value=""; ["#fGroup","#fOkres","#fOz","#fFlag"].forEach(s=>$(s).value=""); S.highlight=null; renderCust(); };
+["#qR","#qP"].forEach(s=>$(s).addEventListener("input",renderTasks));
+["#qD","#fDType","#dFrom","#dTo"].forEach(s=>$(s).addEventListener("input",renderDone));
+$$("#tCust thead th[data-s]").forEach(th=>th.onclick=()=>{
+  const k=th.dataset.s; S.dir = (S.sort===k) ? -S.dir : 1; S.sort=k; $("#sortSel").value=k; renderCust();
+});
+
+/* inline editace poznámky / reklamace */
+document.addEventListener("click", e=>{
+  const box = e.target.closest(".cellbox");
+  if(box && !box.dataset.editing){
+    const [cid,type] = box.dataset.ed.split("|");
+    const cust = S.customers.find(c=>c.id===cid);
+    const t = taskOf(cid,type);
+    box.dataset.editing="1";
+    const ta = document.createElement("textarea");
+    ta.className="ed"; ta.value = t ? t.text : "";
+    ta.placeholder = type==="rekl" ? "Nội dung khiếu nại…" : "Ghi chú…";
+    box.replaceWith(ta); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    const save=()=>{ ta.removeEventListener("blur",save); setTask(cust,type,ta.value); renderCust(); };
+    ta.addEventListener("blur", save);
+    ta.addEventListener("keydown", ev=>{
+      if(ev.key==="Escape"){ ta.removeEventListener("blur",save); renderCust(); }
+      if(ev.key==="Enter" && (ev.ctrlKey||ev.metaKey)) ta.blur();
+    });
+  }
+});
+
+/* tlačítko Hotovo — 2× potvrzení */
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-done]"); if(!b) return;
+  e.stopPropagation();
+  if(b.dataset.armed){ completeTask(b.dataset.done); return; }
+  const orig=b.textContent; b.dataset.armed="1"; b.textContent="Xác nhận?"; b.classList.remove("ok"); b.classList.add("danger");
+  setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent=orig; b.classList.add("ok"); b.classList.remove("danger"); } },5000);
+});
+
+/* upload souboru */
+document.addEventListener("change", e=>{
+  const inp = e.target.closest("[data-up]");
+  if(inp && inp.files[0]) uploadFile(inp.dataset.up, inp.files[0]);
+  const sel = e.target.closest("[data-oz]");
+  if(sel){
+    const c = S.customers.find(x=>x.id===sel.dataset.oz);
+    if(sel.value === c.oz_auto) delete S.overrides[c.id]; else S.overrides[c.id]=sel.value;
+    applyOverrides(); markDirty(); renderAll();
+  }
+});
+
+/* proklik z tabulky reklamací/poznámek do seznamu zákazníků */
+document.addEventListener("click", e=>{
+  const tr = e.target.closest("[data-goto]"); if(!tr) return;
+  if(e.target.closest("button, a, input, select, [data-file]")) return;
+  const id = tr.dataset.goto;
+  const c = S.customers.find(x=>x.id===id); if(!c) return;
+  gotoTab("cust");
+  $("#btnClear").click();
+  $("#q").value = c.ico || c.firma;
+  S.highlight = id; renderCust();
+});
+
+/* klik na přílohu */
+document.addEventListener("click", e=>{
+  const el = e.target.closest("[data-file]"); if(!el) return;
+  e.stopPropagation();
+  const [tid,i] = el.dataset.file.split("|"); openFile(tid, +i);
+});
+
+/* detail zákazníka */
+document.addEventListener("click", e=>{
+  const b = e.target.closest("[data-detail]"); if(!b) return;
+  const c = S.customers.find(x=>x.id===b.dataset.detail);
+  $("#detailBody").innerHTML = `<h3 style="margin:0 0 12px">${esc(c.firma)}</h3><div class="g">
+    <div>IČO</div><div>${esc(c.ico)||"—"}</div>
+    <div>Číslo v systému</div><div>${esc(c.cislo)}</div>
+    <div>Cenová skupina</div><div>${esc(c.cenova_skupina)}</div>
+    <div>Nhóm khách</div><div>${esc(c.skupina_label)}</div>
+    <div>Ưu tiên</div><div>${esc(c.priorita_text)}</div>
+    <div>Điện thoại</div><div>${esc(c.telefon)||"—"}</div>
+    <div>Email</div><div>${esc(c.email)||"—"}</div>
+    <div>Dodací adresa</div><div>${esc(c.adresa)||"—"}</div>
+    <div>Korespondenční</div><div>${esc(c.adresa_koresp)||"—"}</div>
+    <div>Okres / Kraj</div><div>${esc(c.okres)} / ${esc(c.kraj)}</div>
+    <div>Tổng số đơn</div><div>${c.pocet_objednavek}</div>
+    <div>Tổng tiền hàng</div><div>${czk(c.obrat_celkem)}</div>
+    <div>Mua đầu tiên</div><div>${fmtD(c.prvni_nakup)||"—"}</div>
+    <div>Mua gần nhất</div><div>${fmtD(c.posledni_nakup)||"—"} ${c.posledni_doklad?`(${esc(c.posledni_doklad)})`:""}</div>
+    <div>Hạn thăm</div><div>${fmtD(c.termin_do)||"—"} ${c.po_terminu_dni>0?`<span class="overdue">quá ${c.po_terminu_dni} ngày</span>`:""}</div>
+    <div>Ngày đăng ký</div><div>${fmtD(c.vytvoreno)||"—"}</div>
+    <div>Obchodní zástupce</div><div>${esc(c.obchodni_zastupce)} ${c.oz_rucne?"(sửa tay)":"(tự động)"}</div>
+  </div>`;
+  $("#dlgDetail").showModal();
+});
+
+/* export CSV z hotových úkolů */
+$("#btnExport").onclick = ()=>{
+  const rows = [["Firma","ICO","Typ","Text","Vytvoreno","Vytvoril","Hotovo","Dokoncil"]];
+  doneList().forEach(t=>rows.push([t.firma,t.ico,t.type==="rekl"?"Khieu nai":"Ghi chu",
+    (t.text||"").replace(/\n/g," "),t.created_at,t.created_by,t.done_at,t.done_by]));
+  const csv = "﻿"+rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(";")).join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  a.download=`hotovo_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+};
+</script>
+</body>
+</html>
