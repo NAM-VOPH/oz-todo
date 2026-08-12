@@ -90,6 +90,17 @@ dialog::backdrop{background:#000a}
     <input id="lgPin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="••••">
     <div id="loginErr"></div>
     <button class="primary" id="lgBtn" style="width:100%;margin-top:14px;padding:9px">Đăng nhập</button>
+    <div id="lgLeft" class="small muted" style="margin-top:10px;text-align:center"></div>
+  </div>
+
+  <div class="card hidden" id="lockCard" style="border-color:var(--dang)">
+    <h1 style="color:var(--dang)">🔒 Đã bị khóa</h1>
+    <p id="lockWhy">Nhập sai PIN quá số lần cho phép.</p>
+    <p class="small muted" style="margin:0 0 8px">Gửi mã dưới đây cho NAM để mở khóa:</p>
+    <div id="lockCode" style="font:700 26px/1.3 ui-monospace,Consolas,monospace;letter-spacing:4px;
+         text-align:center;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px"></div>
+    <div id="lockInfo" class="small muted" style="margin-top:12px"></div>
+    <button id="lockRetry" style="width:100%;margin-top:14px">Thử lại (sau khi NAM mở khóa)</button>
   </div>
 </div>
 
@@ -203,7 +214,8 @@ dialog::backdrop{background:#000a}
 
 <dialog id="dlgToken">
   <h3 style="margin:0 0 6px">GitHub token</h3>
-  <p class="muted small" style="margin:0 0 14px">Cần token để lưu ghi chú / khiếu nại lên GitHub. Token chỉ lưu trong trình duyệt này.<br>
+  <p class="muted small" style="margin:0 0 14px">Bình thường <b>không cần làm gì ở đây</b> — token chung đã được lưu sẵn (mã hóa) trong repo và tự mở khi bạn đăng nhập bằng PIN.<br><br>
+  Ô dưới chỉ dùng khi muốn <b>ghi đè</b> bằng token riêng của máy này. Xóa token riêng thì tự quay về token chung.<br>
   Tạo tại <b>github.com → Settings → Developer settings → Personal access tokens → Fine-grained</b>, chọn đúng repo, quyền <b>Contents: Read and write</b>.</p>
   <input id="tokIn" type="password" placeholder="github_pat_…" style="width:100%">
   <div class="row" style="margin-top:14px;justify-content:flex-end">
@@ -275,6 +287,87 @@ const S = {
 };
 const GROUP_COLOR = {1:"var(--p1)",2:"var(--p2)",3:"var(--p3)",4:"var(--p4)",5:"var(--p5)",6:"var(--p6)"};
 
+/* ===================== bezpečnost: zámek po 5 chybných PINech =====================
+   Prohlížeč NEUMÍ přečíst MAC adresu (žádné API to nedovolí), takže identita
+   zařízení = trvalé náhodné ID v localStorage + otisk prohlížeče. IP se zjišťuje
+   z veřejné služby. Zámek zastaví hádání PINu přes web; skutečnou ochranou
+   proti offline útoku je délka PINu (8 číslic). */
+const SEC = { file:"data/security.json", max:5 };
+
+async function sha256hex(t){
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function deviceId(){
+  let d = localStorage.getItem("oz_device");
+  if(!d){
+    const fp = [navigator.userAgent, navigator.language, screen.width+"x"+screen.height,
+                new Date().getTimezoneOffset(), navigator.hardwareConcurrency||0].join("|");
+    d = fp + "|" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36));
+    localStorage.setItem("oz_device", d);
+  }
+  return d;
+}
+async function publicIP(){
+  try{
+    const c = new AbortController(); setTimeout(()=>c.abort(), 3000);
+    const r = await fetch("https://api.ipify.org?format=json",{signal:c.signal});
+    return (await r.json()).ip || "";
+  }catch(e){ return ""; }
+}
+const getLock = () => { try{ return JSON.parse(localStorage.getItem("oz_lock")||"{}"); }catch(e){ return {}; } };
+const setLock = o => localStorage.setItem("oz_lock", JSON.stringify(o));
+
+async function securityCheck(){
+  S.dev    = await sha256hex(deviceId());
+  S.prefix = S.dev.slice(0,6);                                   // klíč pro admina
+  S.code   = S.prefix.toUpperCase().replace(/(...)(...)/,"$1-$2");
+  const ip = await publicIP();
+  S.ipHash = ip ? await sha256hex(ip) : "";
+  S.ipShort = ip;
+  try{
+    S.sec = await fetch("./"+SEC.file+"?t="+Date.now(),{cache:"no-store"}).then(r=>r.json());
+  }catch(e){ S.sec = {blocked:[], cleared:[]}; }
+  SEC.max = S.sec.max_attempts || 5;
+
+  const mine = x => (x.prefix && x.prefix===S.prefix) || (x.ip && S.ipHash && x.ip===S.ipHash);
+  const cleared = (S.sec.cleared||[]).filter(mine).map(c=>c.at).sort().pop() || "";
+  // 1) trvalá blokace od admina
+  const blk = (S.sec.blocked||[]).find(mine);
+  if(blk && !(cleared && cleared > (blk.at||""))) return showLock("Thiết bị này đã bị NAM chặn.");
+
+  // 2) místní zámek po chybných PINech
+  const lk = getLock();
+  if(cleared && cleared > (lk.at||"")){ setLock({}); return false; }   // admin odemkl
+  if((lk.fails||0) >= SEC.max) return showLock();
+  return false;
+}
+
+function showLock(why){
+  $("#lgBtn").disabled = true;
+  $("#loginErr").textContent = ""; $("#lgLeft").textContent = "";
+  $("#loginErr").parentElement.classList.add("hidden");
+  $("#lockCard").classList.remove("hidden");
+  if(why) $("#lockWhy").textContent = why;
+  $("#lockCode").textContent = S.code;
+  const lk = getLock();
+  $("#lockInfo").innerHTML = `Người dùng: <b>${esc(lk.user||"?")}</b><br>`
+    + `IP: ${esc(S.ipShort||"không xác định")}<br>`
+    + (lk.at ? `Thời điểm khóa: ${fmtDT(lk.at)}` : "");
+  return true;
+}
+$("#lockRetry").onclick = ()=> location.reload();
+
+async function registerFail(user){
+  const lk = getLock();
+  lk.fails = (lk.fails||0)+1; lk.user = user; lk.at = nowISO();
+  setLock(lk);
+  const left = SEC.max - lk.fails;
+  if(left <= 0){ showLock(); return true; }
+  $("#lgLeft").innerHTML = `<span style="color:var(--warn)">Còn ${left} lần thử trước khi bị khóa</span>`;
+  return false;
+}
+
 /* ===================== login ===================== */
 $("#lgBtn").onclick = doLogin;
 $("#lgPin").onkeydown = e => { if(e.key==="Enter") doLogin(); };
@@ -286,6 +379,10 @@ $("#lgPin").onkeydown = e => { if(e.key==="Enter") doLogin(); };
       const o=document.createElement("option"); o.textContent=n; $("#lgUser").appendChild(o); });
     const last = sessionStorage.getItem("oz_user"); if(last) $("#lgUser").value=last;
   }catch(e){ $("#loginErr").textContent="Không tải được keys.json — kiểm tra cài đặt."; }
+  if(await securityCheck()) return;
+  const lk = getLock();
+  if(lk.fails) $("#lgLeft").innerHTML =
+    `<span style="color:var(--warn)">Còn ${SEC.max-lk.fails} lần thử trước khi bị khóa</span>`;
   $("#lgPin").focus();
 })();
 
@@ -299,14 +396,36 @@ async function doLogin(){
     const raw = await aesDec(u.wrapped, kek);                      // sai PIN -> vyjimka
     S.key  = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt","decrypt"]);
     S.user = {name, role:u.role};
-  }catch(e){ $("#loginErr").textContent="Sai PIN."; $("#lgBtn").disabled=false; return; }
+  }catch(e){
+    $("#lgBtn").disabled=false; $("#lgPin").value="";
+    if(await registerFail(name)) return;                           // 5. chyba -> zámek
+    $("#loginErr").textContent="Sai PIN.";
+    return;
+  }
+  setLock({});                                                     // úspěch -> vynulovat počítadlo
+  $("#lgLeft").textContent="";
   $("#lgBtn").disabled=false; $("#loginErr").textContent="";
   sessionStorage.setItem("oz_user", name);
   $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
   $("#hUser").textContent = S.user.name + (S.user.role==="admin" ? " (admin)" : " (OZ)");
   if(S.user.role==="admin") $("#fOz").classList.remove("hidden");
-  S.token = localStorage.getItem("oz_token") || null;
+  await loadToken();
   await loadAll();
+}
+
+/* Token: nejdřív ten uložený v repu (zašifrovaný, odemkne se PINem),
+   ruční token v prohlížeči má přednost jen když existuje. */
+async function loadToken(){
+  const local = localStorage.getItem("oz_token");
+  if(local){ S.token = local; S.tokenSrc = "prohlížeč"; return; }
+  try{
+    const r = await fetch("./data/tokens.json?t="+Date.now(),{cache:"no-store"});
+    if(!r.ok) return;
+    const blob = await r.json();
+    const store = (blob && blob.v===1 && blob.ct) ? await decJSON(blob, S.key) : blob;
+    S.token = store[S.user.name] || store["*"] || null;
+    if(S.token) S.tokenSrc = "repo";
+  }catch(e){ /* token v repu není - jede se jen pro čtení */ }
 }
 $("#btnLogout").onclick = ()=>{ sessionStorage.removeItem("oz_user"); location.reload(); };
 
@@ -317,7 +436,12 @@ $("#tokSave").onclick = ()=>{
   if(t){ localStorage.setItem("oz_token",t); S.token=t; toast("Đã lưu token.","ok"); }
   $("#dlgToken").close(); renderSyncStat();
 };
-$("#tokDel").onclick = ()=>{ localStorage.removeItem("oz_token"); S.token=null; $("#dlgToken").close(); renderSyncStat(); };
+$("#tokDel").onclick = async ()=>{
+  localStorage.removeItem("oz_token"); S.token=null; S.tokenSrc=null;
+  await loadToken();                                  // spadne zpět na token z repa
+  $("#dlgToken").close(); renderSyncStat();
+  toast(S.token ? "Đã xóa token riêng, dùng lại token chung." : "Đã xóa token.","ok");
+};
 
 /* ===================== načítání dat ===================== */
 /* Vše v data/ je zašifrované AES-GCM; ghGet dešifruje, ghPut zašifruje. */
@@ -327,6 +451,11 @@ async function ghGet(path){
     const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}?ref=${CFG.BRANCH}`,
       {headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json"},cache:"no-store"});
     if(r.status===404) return {data:null, sha:null};
+    if(r.status===401 || r.status===403){        // token vypršel / nemá práva
+      S.token=null; S.tokenSrc=null; renderSyncStat();
+      toast("Token không dùng được (hết hạn?) — chuyển sang chế độ chỉ đọc.","err");
+      return ghGet(path);                        // zkusit veřejnou cestou
+    }
     if(!r.ok) throw new Error(`GitHub GET ${path}: ${r.status}`);
     const j = await r.json(); sha = j.sha; blob = JSON.parse(b64dec(j.content));
   }else{
@@ -388,6 +517,7 @@ function markDirty(){
 function renderSyncStat(){
   const el=$("#syncStat");
   if(!S.token){ el.innerHTML='<span style="color:var(--warn)">⚠ chưa có token — chỉ đọc</span>'; return; }
+  el.title = "Token: "+(S.tokenSrc||"?");
   if(S.syncing) el.textContent="⏳ đang lưu…";
   else if(S.dirty) el.innerHTML='<span style="color:var(--warn)">● có thay đổi chưa lưu</span>';
   else el.innerHTML='<span style="color:var(--ok)">✓ đã đồng bộ</span>';
