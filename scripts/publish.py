@@ -101,11 +101,16 @@ def main():
         with open(prev_path, "w", encoding="utf-8") as f:
             json.dump(old, f, ensure_ascii=False)
 
+    # dokoncene ukoly -> navstevy, resetuji termin navstevy
+    done_path = os.path.join(tmp, "completed.json")
+    with open(done_path, "w", encoding="utf-8") as f:
+        json.dump({"tasks": done}, f, ensure_ascii=False)
+
     # 2) prepocitat ---------------------------------------------------------
     out = os.path.join(tmp, "customers.json")
     cmd = [sys.executable, os.path.join(here, "build_db.py"),
            "--odberatele", a.odberatele, "--prodeje", a.prodeje,
-           "--out", out, "--overrides", ov_path]
+           "--out", out, "--overrides", ov_path, "--completed", done_path]
     if old:
         cmd += ["--previous", prev_path]
     subprocess.run(cmd, check=True)
