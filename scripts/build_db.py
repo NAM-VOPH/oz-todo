@@ -40,6 +40,10 @@ GROUPS = {
     "khach tham khao":  (5, None, "Kontakt kdykoli / návštěva při cestě"),
     "khach khong tiem nang": (6, None, "Kontakt kdykoli / návštěva při cestě"),
 }
+# Ktere dokoncene ukoly se pocitaji jako navsteva/kontakt a resetuji termin.
+# "pozn" = ghi chú (OZ byl u zakaznika), "rekl" = khiếu nại (take kontakt).
+NAVSTEVA_TYPY = {"pozn", "rekl"}
+
 GROUP_LABEL = {
     "khach lon": "Khách lớn",
     "khach tiem nang": "Khách tiềm năng",
@@ -72,6 +76,20 @@ def parse_dt(v):
         except ValueError:
             pass
     return None
+
+
+def parse_iso(v):
+    """ISO 8601 z webu ('2026-08-12T08:55:39.036Z') -> naivni local-like datetime."""
+    if not v:
+        return None
+    s = str(v).strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
 
 
 def d(v):
@@ -218,13 +236,46 @@ def classify(cust, today):
     return "khach khong tiem nang"
 
 
+def read_navstevy(path):
+    """data/completed.json -> {cust_id: {"datum": dt, "by": str, "text": str}}.
+
+    Dokonceny ukol znamena, ze OZ zakaznika resil (navstiva / kontakt), takze
+    se od toho dne pocita novy termin. Bere se vzdy nejnovejsi done_at.
+    """
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        tasks = json.load(f).get("tasks", [])
+    out = {}
+    for t in tasks:
+        if t.get("type") not in NAVSTEVA_TYPY:
+            continue
+        cid = str(t.get("cust_id") or "")
+        dt = parse_iso(t.get("done_at"))
+        if not cid or not dt:
+            continue
+        cur = out.get(cid)
+        if cur is None or dt > cur["datum"]:
+            out[cid] = {"datum": dt, "by": t.get("done_by") or "",
+                        "text": (t.get("text") or "")[:200], "typ": t.get("type")}
+    return out
+
+
 def deadline(cust, today):
-    """Datum, do kdy je treba kontakt, + kolik dni je po termínu."""
+    """Datum, do kdy je treba kontakt, + kolik dni je po termínu.
+
+    Zaklad = pozdejsi z (posledni nakup / registrace) a (posledni navsteva,
+    tj. dokonceny ukol na webu). Kdyz OZ zakaznika navstivi a odskrtne ukol,
+    termin se timto dnem resetuje.
+    """
     g = cust["skupina"]
     interval = GROUPS[g][1]
     if interval is None:
         return None, 0
     base = parse_dt(cust["vytvoreno"]) if g == "khach moi" else parse_dt(cust["posledni_nakup"])
+    nav = parse_dt(cust.get("posledni_navsteva"))
+    if nav and (base is None or nav > base):
+        base = nav
     if not base:
         return None, 0
     due = base + timedelta(days=interval)
@@ -240,6 +291,8 @@ def main():
     ap.add_argument("--overrides", default="data/overrides.json")
     ap.add_argument("--previous", default=None,
                     help="predchozi customers.json - zachova prirazeni OZ")
+    ap.add_argument("--completed", default=None,
+                    help="data/completed.json - dokoncene ukoly = navstevy, resetuji termin")
     a = ap.parse_args()
 
     today = datetime.now()
@@ -256,6 +309,7 @@ def main():
 
     odb = read_odberatele(a.odberatele)
     sales = read_prodeje(a.prodeje)
+    navstevy = read_navstevy(a.completed)
 
     customers, warn_psc, warn_oz = [], [], []
     for o in odb:
@@ -268,6 +322,13 @@ def main():
         c["posledni_doklad"] = s.get("posledni_doklad", "")
         c["dni_od_nakupu"] = ((today - s["posledni"]).days
                               if s.get("posledni") else None)
+
+        # posledni navsteva = nejnovejsi dokonceny ukol na webu
+        nav = navstevy.get(c["id"])
+        c["posledni_navsteva"] = d(nav["datum"]) if nav else None
+        c["navsteva_by"] = nav["by"] if nav else ""
+        c["navsteva_text"] = nav["text"] if nav else ""
+        c["dni_od_navstevy"] = (today - nav["datum"]).days if nav else None
 
         c["skupina"] = classify(c, today)
         c["skupina_label"] = GROUP_LABEL[c["skupina"]]
