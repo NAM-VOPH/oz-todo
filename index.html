@@ -9,7 +9,7 @@
   --bg:#0f1419; --panel:#171d26; --panel2:#1e2632; --line:#2b3644;
   --tx:#e6edf3; --tx2:#93a1b1; --acc:#3b82f6; --ok:#22c55e; --warn:#f59e0b;
   --dang:#ef4444; --p1:#ef4444; --p2:#f59e0b; --p3:#8b5cf6; --p4:#3b82f6;
-  --p5:#64748b; --p6:#475569;
+  --p5:#64748b; --p6:#475569; --p7:#334155;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
@@ -281,11 +281,23 @@ function toast(msg, kind){
 /* ===================== stav ===================== */
 const S = {
   user:null, token:null, key:null, keys:null,
-  customers:[], tasks:[], done:[], overrides:{},
+  customers:[], tasks:[], done:[], overrides:{}, skupinaOvr:{},
   sha:{}, dirty:false, timer:null, syncing:false,
   sort:"priorita", dir:1, highlight:null
 };
-const GROUP_COLOR = {1:"var(--p1)",2:"var(--p2)",3:"var(--p3)",4:"var(--p4)",5:"var(--p5)",6:"var(--p6)"};
+const GROUP_COLOR = {1:"var(--p1)",2:"var(--p2)",3:"var(--p3)",4:"var(--p4)",5:"var(--p5)",6:"var(--p6)",7:"var(--p7)"};
+
+/* Nhóm khách — phải khớp GROUPS / GROUP_LABEL trong scripts/build_db.py.
+   [ưu tiên, số ngày giữa 2 lần thăm (null = không có hạn), mô tả] */
+const GROUPS = {
+  "khach lon":             {p:1, dny:21,   label:"Khách lớn",               txt:"Návštěva 1x / 21 dní"},
+  "khach tiem nang":       {p:2, dny:30,   label:"Khách tiềm năng",         txt:"Návštěva 1x / 30 dní"},
+  "khach moi":             {p:3, dny:90,   label:"Khách mới",               txt:"Kontakt / návštěva do 3 měsíců od registrace"},
+  "khach thuong":          {p:4, dny:60,   label:"Khách thường",            txt:"Návštěva 1x / 60 dní"},
+  "khach tham khao":       {p:5, dny:null, label:"Khách tham khảo",         txt:"Kontakt kdykoli / návštěva při cestě"},
+  "khach khong tiem nang": {p:6, dny:null, label:"Khách không tiềm năng",   txt:"Kontakt kdykoli / návštěva při cestě"},
+  "khach ngung mua":       {p:7, dny:null, label:"Khách không lấy hàng nữa", txt:"Neodebírá – bez termínu návštěvy"},
+};
 
 /* ===================== bezpečnost: zámek po 5 chybných PINech =====================
    Prohlížeč NEUMÍ přečíst MAC adresu (žádné API to nedovolí), takže identita
@@ -497,6 +509,7 @@ async function loadAll(){
     S.tasks = (t.data&&t.data.tasks)||[];  S.sha[PATHS.tasks]=t.sha;
     S.done  = (dn.data&&dn.data.tasks)||[]; S.sha[PATHS.done]=dn.sha;
     S.overrides = (ov.data&&ov.data.obchodni_zastupce)||{}; S.sha[PATHS.ovr]=ov.sha;
+    S.skupinaOvr = (ov.data&&ov.data.skupina)||{};
     applyOverrides(); buildFilters(); renderAll();
     toast("Đã tải dữ liệu.","ok");
   }catch(e){ toast("Lỗi tải dữ liệu: "+e.message,"err"); console.error(e); }
@@ -505,7 +518,50 @@ function applyOverrides(){
   S.customers.forEach(c=>{
     c.obchodni_zastupce = S.overrides[c.id] || c.oz_auto;
     c.oz_rucne = !!S.overrides[c.id];
+    applySkupina(c);
   });
+}
+
+/* Nhóm khách: ưu tiên lựa chọn tay của NAM, sau đó mới đến tính tự động.
+   Giống hệt logic skupina_override() trong scripts/build_db.py.
+   Nếu khách có đơn hàng MỚI sau ngày NAM sửa → tự quay về nhóm tự động. */
+function skupinaManual(c){
+  const o = S.skupinaOvr[c.id];
+  if(!o) return null;
+  const g = (typeof o === "string") ? o : o.g;
+  if(!GROUPS[g]) return null;
+  const at = (typeof o === "string") ? null : o.at;
+  if(at && c.posledni_nakup && new Date(c.posledni_nakup) > new Date(at)) return null;
+  return {g, at, by:(typeof o === "string") ? "" : (o.by||"")};
+}
+
+function applySkupina(c){
+  if(!c.skupina_auto) c.skupina_auto = c.skupina;      // starší customers.json
+  const man = skupinaManual(c);
+  c.skupina = man ? man.g : c.skupina_auto;
+  c.skupina_rucne = !!man;
+  c.skupina_zmena = man ? man.at : null;
+  c.skupina_by = man ? man.by : "";
+  const g = GROUPS[c.skupina] || GROUPS[c.skupina_auto];
+  c.skupina_label = g.label; c.priorita = g.p; c.priorita_text = g.txt;
+  if(c._search0===undefined) c._search0 = c._search;
+  c._search = c._search0 + " " + nodia(c.skupina_label);   // tìm kiếm theo nhóm mới
+  recalcTermin(c);
+}
+
+/* Hạn thăm = (mốc muộn hơn giữa mua gần nhất / ngày tạo và lần thăm cuối) + số ngày của nhóm.
+   Nhóm không có số ngày (kể cả "Khách không lấy hàng nữa") → xóa hạn thăm. */
+function recalcTermin(c){
+  const dny = (GROUPS[c.skupina]||{}).dny;
+  if(dny == null){ c.termin_do = null; c.po_terminu_dni = 0; return; }
+  const base0 = c.skupina==="khach moi" ? c.vytvoreno : c.posledni_nakup;
+  let base = base0 ? new Date(base0) : null;
+  const nav = c.posledni_navsteva ? new Date(c.posledni_navsteva) : null;
+  if(nav && (!base || nav > base)) base = nav;
+  if(!base){ c.termin_do = null; c.po_terminu_dni = 0; return; }
+  const due = new Date(base.getTime() + dny*86400000);
+  c.termin_do = due.toISOString().slice(0,10);
+  c.po_terminu_dni = Math.max(0, Math.floor((Date.now() - due.getTime())/86400000));
 }
 
 /* ===================== ukládání (sync) ===================== */
@@ -537,11 +593,12 @@ async function sync(){
     const doneIds = new Set(S.done.map(x=>x.id));
     S.tasks = S.tasks.filter(x=>!doneIds.has(x.id) && !x._deleted);
     S.overrides = Object.assign({}, (ov.data&&ov.data.obchodni_zastupce)||{}, S.overrides);
+    S.skupinaOvr = Object.assign({}, (ov.data&&ov.data.skupina)||{}, S.skupinaOvr);
 
     const stamp = new Date().toISOString().slice(0,16).replace("T"," ");
     await ghPut(PATHS.tasks, {updated_at:nowISO(), tasks:S.tasks}, `tasks ${S.user.name} ${stamp}`);
     await ghPut(PATHS.done,  {updated_at:nowISO(), tasks:S.done},  `hotovo ${S.user.name} ${stamp}`);
-    await ghPut(PATHS.ovr,   {updated_at:nowISO(), obchodni_zastupce:S.overrides}, `oz ${S.user.name} ${stamp}`);
+    await ghPut(PATHS.ovr,   {updated_at:nowISO(), obchodni_zastupce:S.overrides, skupina:S.skupinaOvr}, `oz ${S.user.name} ${stamp}`);
     S.dirty=false; applyOverrides(); renderAll(); toast("Đã lưu lên GitHub.","ok");
   }catch(e){
     toast("Lỗi lưu: "+e.message,"err"); console.error(e);
@@ -685,6 +742,20 @@ function noteCell(c, type){
     </div>`;
 }
 
+/* Cột "Nhóm": NAM sửa được bằng dropdown, AHUY chỉ xem. */
+function groupCell(c){
+  const col = GROUP_COLOR[c.priorita];
+  if(S.user.role!=="admin")
+    return `<span class="badge" style="background:${col}22;color:${col};border:1px solid ${col}55">${esc(c.skupina_label)}</span>`;
+  const opts = Object.entries(GROUPS).map(([k,g])=>
+    `<option value="${k}" ${c.skupina===k?"selected":""}>${esc(g.label)}</option>`).join("");
+  const auto = GROUPS[c.skupina_auto] ? GROUPS[c.skupina_auto].label : "—";
+  return `<select data-skup="${c.id}" style="padding:2px 4px;font-size:12px;color:${col};border-color:${col}55">
+      ${opts}<option value="__auto">↺ Tự động (${esc(auto)})</option>
+    </select>${c.skupina_rucne
+      ? `<div class="small muted" title="Tự động sẽ là: ${esc(auto)}">sửa tay${c.skupina_by?" · "+esc(c.skupina_by):""}</div>` : ""}`;
+}
+
 function renderCust(){
   const list = visibleCustomers();
   $("#custCount").textContent = `${list.length} / ${S.customers.length} khách`;
@@ -701,7 +772,7 @@ function renderCust(){
         <div class="small muted">${esc(c.priorita_text)}</div></td>
       <td><b class="lnk" style="cursor:pointer" data-detail="${c.id}">${esc(c.firma)}</b>
         ${c.dodaci_nazev?`<div class="small muted">${esc(c.dodaci_nazev)}</div>`:""}</td>
-      <td class="nowrap"><span class="badge" style="background:${GROUP_COLOR[c.priorita]}22;color:${GROUP_COLOR[c.priorita]};border:1px solid ${GROUP_COLOR[c.priorita]}55">${esc(c.skupina_label)}</span></td>
+      <td class="nowrap">${groupCell(c)}</td>
       <td class="nowrap">${esc(c.ico)}</td>
       <td class="small">${c.telefon?`<a href="tel:${esc(c.telefon)}">${esc(c.telefon)}</a><br>`:""}${c.email?`<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>`:""}</td>
       <td class="small" style="max-width:230px">${esc(c.adresa)}<div class="muted"><b>${esc(c.okres)}</b> · ${esc(c.kraj)}</div></td>
@@ -825,6 +896,17 @@ document.addEventListener("change", e=>{
     if(sel.value === c.oz_auto) delete S.overrides[c.id]; else S.overrides[c.id]=sel.value;
     applyOverrides(); markDirty(); renderAll();
   }
+  /* dropdown nhóm khách — chỉ admin (NAM) */
+  const gs = e.target.closest("[data-skup]");
+  if(gs && S.user.role==="admin"){
+    const c = S.customers.find(x=>x.id===gs.dataset.skup);
+    const v = gs.value;
+    if(v==="__auto" || v===c.skupina_auto) delete S.skupinaOvr[c.id];
+    else S.skupinaOvr[c.id] = {g:v, at:nowISO(), by:S.user.name};
+    applyOverrides(); buildFilters(); markDirty(); renderAll();
+    toast(v==="__auto" ? `${c.firma}: trả về nhóm tự động (${GROUPS[c.skupina_auto].label})`
+                       : `${c.firma}: ${GROUPS[c.skupina].label}${GROUPS[c.skupina].dny==null?" · đã xóa hạn thăm":""}`, "ok");
+  }
 });
 
 /* proklik z tabulky reklamací/poznámek do seznamu zákazníků */
@@ -854,7 +936,9 @@ document.addEventListener("click", e=>{
     <div>IČO</div><div>${esc(c.ico)||"—"}</div>
     <div>Číslo v systému</div><div>${esc(c.cislo)}</div>
     <div>Cenová skupina</div><div>${esc(c.cenova_skupina)}</div>
-    <div>Nhóm khách</div><div>${esc(c.skupina_label)}</div>
+    <div>Nhóm khách</div><div>${esc(c.skupina_label)} ${c.skupina_rucne
+      ? `<span class="muted small">(sửa tay${c.skupina_by?" · "+esc(c.skupina_by):""}${c.skupina_zmena?" · "+fmtD(c.skupina_zmena):""} · tự động: ${esc((GROUPS[c.skupina_auto]||{}).label||"—")})</span>`
+      : '<span class="muted small">(tự động)</span>'}</div>
     <div>Ưu tiên</div><div>${esc(c.priorita_text)}</div>
     <div>Điện thoại</div><div>${esc(c.telefon)||"—"}</div>
     <div>Email</div><div>${esc(c.email)||"—"}</div>
