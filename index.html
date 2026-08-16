@@ -709,7 +709,7 @@ function renderCust(){
       <td class="num">${czk(c.obrat_celkem)}</td>
       <td class="num small">${fmtD(c.prvni_nakup)}</td>
       <td class="num small">${fmtD(c.posledni_nakup)}${c.dni_od_nakupu!=null?`<div class="muted">${c.dni_od_nakupu} ngày</div>`:""}</td>
-      <td class="num small ${od?"overdue":""}">${fmtD(c.termin_do)||"—"}${od?`<div>quá ${c.po_terminu_dni} ngày</div>`:""}</td>
+      <td class="num small ${od?"overdue":""}">${fmtD(c.termin_do)||"—"}${od?`<div>quá ${c.po_terminu_dni} ngày</div>`:""}${c.posledni_navsteva?`<div class="muted" style="color:var(--ok)" title="${esc(c.navsteva_text)}">✓ thăm ${fmtD(c.posledni_navsteva)}${c.navsteva_by?" · "+esc(c.navsteva_by):""}</div>`:""}</td>
       <td class="nowrap">${ozSel}</td>
       <td>${noteCell(c,"pozn")}</td>
       <td>${noteCell(c,"rekl")}</td>
