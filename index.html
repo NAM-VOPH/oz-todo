@@ -282,7 +282,8 @@ function toast(msg, kind){
 const S = {
   user:null, token:null, key:null, keys:null,
   customers:[], tasks:[], done:[], overrides:{}, skupinaOvr:{},
-  sha:{}, dirty:false, timer:null, syncing:false,
+  ovrDel:[], skupDel:[],              // key đã xóa (để merge không làm sống lại)
+  sha:{}, dirty:false, timer:null, syncing:false, retry:0,
   sort:"priorita", dir:1, highlight:null
 };
 const GROUP_COLOR = {1:"var(--p1)",2:"var(--p2)",3:"var(--p3)",4:"var(--p4)",5:"var(--p5)",6:"var(--p6)",7:"var(--p7)"};
@@ -456,11 +457,30 @@ $("#tokDel").onclick = async ()=>{
 };
 
 /* ===================== načítání dat ===================== */
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+
+/* Mạng chập chờn (mobil, wifi yếu) → fetch ném "Failed to fetch".
+   Thử lại vài lần trước khi báo lỗi; lỗi 5xx của GitHub cũng thử lại. */
+async function fetchRetry(url, opts, tries=4){
+  let last;
+  for(let i=0; i<tries; i++){
+    try{
+      const r = await fetch(url, opts);
+      if(r.status < 500) return r;
+      last = new Error("GitHub "+r.status);
+    }catch(e){
+      last = new Error("mất kết nối mạng");
+    }
+    if(i < tries-1) await sleep(700 * Math.pow(2, i));      // 0,7s → 1,4s → 2,8s
+  }
+  throw last;
+}
+
 /* Vše v data/ je zašifrované AES-GCM; ghGet dešifruje, ghPut zašifruje. */
 async function ghGet(path){
   let blob, sha=null;
   if(S.token){
-    const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}?ref=${CFG.BRANCH}`,
+    const r = await fetchRetry(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}?ref=${CFG.BRANCH}&t=${Date.now()}`,
       {headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json"},cache:"no-store"});
     if(r.status===404) return {data:null, sha:null};
     if(r.status===401 || r.status===403){        // token vypršel / nemá práva
@@ -471,7 +491,7 @@ async function ghGet(path){
     if(!r.ok) throw new Error(`GitHub GET ${path}: ${r.status}`);
     const j = await r.json(); sha = j.sha; blob = JSON.parse(b64dec(j.content));
   }else{
-    const r = await fetch("./"+path+"?t="+Date.now(),{cache:"no-store"});
+    const r = await fetchRetry("./"+path+"?t="+Date.now(),{cache:"no-store"});
     if(!r.ok) throw new Error(`fetch ${path}: ${r.status}`);
     blob = await r.json();
   }
@@ -481,13 +501,31 @@ async function ghGet(path){
 
 async function ghPut(path, obj, msg){
   const enc = await encJSON(obj, S.key);
-  const body = {message:msg, content:b64enc(JSON.stringify(enc)), branch:CFG.BRANCH};
-  if(S.sha[path]) body.sha = S.sha[path];
-  const r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}`,{
-    method:"PUT", headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json",
-    "Content-Type":"application/json"}, body:JSON.stringify(body)});
-  if(!r.ok) throw new Error(`GitHub PUT ${path}: ${r.status} ${await r.text()}`);
-  S.sha[path] = (await r.json()).content.sha;
+  const content = b64enc(JSON.stringify(enc));
+  let last;
+  for(let att=0; att<3; att++){
+    const body = {message:msg, content, branch:CFG.BRANCH};
+    if(S.sha[path]) body.sha = S.sha[path];
+    let r;
+    try{
+      r = await fetch(`${API}/repos/${CFG.OWNER}/${CFG.REPO}/contents/${path}`,{
+        method:"PUT", headers:{Authorization:"Bearer "+S.token, Accept:"application/vnd.github+json",
+        "Content-Type":"application/json"}, body:JSON.stringify(body)});
+    }catch(e){                                   // "Failed to fetch" = rớt mạng
+      last = new Error("mất kết nối khi lưu "+path);
+      await sleep(700*Math.pow(2,att)); continue;
+    }
+    if(r.ok){ S.sha[path] = (await r.json()).content.sha; return; }
+    const txt = (await r.text()).slice(0,150);
+    last = new Error(`${path}: ${r.status} ${txt}`);
+    if(r.status===409 || r.status===422){        // sha cũ (ai đó vừa lưu) → lấy sha mới
+      try{ S.sha[path] = (await ghGet(path)).sha; }catch(e){}
+      await sleep(500); continue;
+    }
+    if(r.status>=500){ await sleep(700*(att+1)); continue; }
+    throw last;                                  // 401/403/404 → không thử lại
+  }
+  throw last;
 }
 
 async function ghPutBinary(path, base64, msg){
@@ -510,8 +548,9 @@ async function loadAll(){
     S.done  = (dn.data&&dn.data.tasks)||[]; S.sha[PATHS.done]=dn.sha;
     S.overrides = (ov.data&&ov.data.obchodni_zastupce)||{}; S.sha[PATHS.ovr]=ov.sha;
     S.skupinaOvr = (ov.data&&ov.data.skupina)||{};
-    applyOverrides(); buildFilters(); renderAll();
-    toast("Đã tải dữ liệu.","ok");
+    const restored = await restoreDraft();          // thay đổi chưa lưu từ lần trước
+    applyOverrides(); buildFilters(); renderAll(); renderSyncStat();
+    if(restored) sync(); else toast("Đã tải dữ liệu.","ok");
   }catch(e){ toast("Lỗi tải dữ liệu: "+e.message,"err"); console.error(e); }
 }
 function applyOverrides(){
@@ -565,8 +604,43 @@ function recalcTermin(c){
 }
 
 /* ===================== ukládání (sync) ===================== */
+/* Bản nháp cục bộ: mọi thay đổi chưa lưu được cất vào localStorage (đã mã hóa
+   bằng chính khóa dữ liệu, mở lại phải nhập PIN). Mất mạng / F5 / đóng máy
+   giữa chừng đều không mất dữ liệu — lần đăng nhập sau tự khôi phục và lưu tiếp. */
+const DRAFT = "oz_draft";
+async function saveDraft(){
+  if(!S.key) return;
+  try{
+    const enc = await encJSON({tasks:S.tasks, done:S.done, overrides:S.overrides,
+      skupina:S.skupinaOvr, ovrDel:S.ovrDel, skupDel:S.skupDel,
+      user:S.user&&S.user.name, at:nowISO()}, S.key);
+    localStorage.setItem(DRAFT, JSON.stringify(enc));
+  }catch(e){ console.warn("draft:", e); }
+}
+function clearDraft(){ localStorage.removeItem(DRAFT); }
+
+async function restoreDraft(){
+  const raw = localStorage.getItem(DRAFT);
+  if(!raw) return false;
+  let d;
+  try{ d = await decJSON(JSON.parse(raw), S.key); }
+  catch(e){ clearDraft(); return false; }          // nháp của người khác / khóa khác
+  if(!d || d.user !== (S.user&&S.user.name)){ return false; }
+  S.tasks = mergeById(S.tasks, d.tasks||[]);
+  S.done  = mergeById(S.done,  d.done||[]);
+  const doneIds = new Set(S.done.map(x=>x.id));
+  S.tasks = S.tasks.filter(x=>!doneIds.has(x.id));
+  S.overrides  = Object.assign({}, S.overrides,  d.overrides||{});
+  S.skupinaOvr = Object.assign({}, S.skupinaOvr, d.skupina||{});
+  S.ovrDel  = d.ovrDel  || [];  S.ovrDel.forEach(k=>delete S.overrides[k]);
+  S.skupDel = d.skupDel || [];  S.skupDel.forEach(k=>delete S.skupinaOvr[k]);
+  S.dirty = true;
+  toast(`Đã khôi phục thay đổi chưa lưu (${fmtDT(d.at)}) — đang lưu lên GitHub…`,"ok");
+  return true;
+}
+
 function markDirty(){
-  S.dirty = true; renderSyncStat();
+  S.dirty = true; S.retry = 0; renderSyncStat(); saveDraft();
   clearTimeout(S.timer);
   S.timer = setTimeout(sync, CFG.AUTOSYNC_MS);
 }
@@ -575,10 +649,10 @@ function renderSyncStat(){
   if(!S.token){ el.innerHTML='<span style="color:var(--warn)">⚠ chưa có token — chỉ đọc</span>'; return; }
   el.title = "Token: "+(S.tokenSrc||"?");
   if(S.syncing) el.textContent="⏳ đang lưu…";
-  else if(S.dirty) el.innerHTML='<span style="color:var(--warn)">● có thay đổi chưa lưu</span>';
+  else if(S.dirty) el.innerHTML='<span style="color:var(--warn)" title="Đã giữ trong máy — F5 hay mất mạng cũng không mất. Bấm để lưu ngay.">● chưa lưu (đã giữ trong máy)</span>';
   else el.innerHTML='<span style="color:var(--ok)">✓ đã đồng bộ</span>';
 }
-$("#btnSync").onclick = ()=> S.dirty ? sync() : loadAll();
+$("#btnSync").onclick = ()=>{ S.retry=0; clearTimeout(S.timer); return S.dirty ? sync() : loadAll(); };
 
 async function sync(){
   if(!S.dirty || S.syncing) return;
@@ -594,15 +668,21 @@ async function sync(){
     S.tasks = S.tasks.filter(x=>!doneIds.has(x.id) && !x._deleted);
     S.overrides = Object.assign({}, (ov.data&&ov.data.obchodni_zastupce)||{}, S.overrides);
     S.skupinaOvr = Object.assign({}, (ov.data&&ov.data.skupina)||{}, S.skupinaOvr);
+    S.ovrDel.forEach(k=>delete S.overrides[k]);      // đã xóa tay → không sống lại
+    S.skupDel.forEach(k=>delete S.skupinaOvr[k]);
 
     const stamp = new Date().toISOString().slice(0,16).replace("T"," ");
     await ghPut(PATHS.tasks, {updated_at:nowISO(), tasks:S.tasks}, `tasks ${S.user.name} ${stamp}`);
     await ghPut(PATHS.done,  {updated_at:nowISO(), tasks:S.done},  `hotovo ${S.user.name} ${stamp}`);
     await ghPut(PATHS.ovr,   {updated_at:nowISO(), obchodni_zastupce:S.overrides, skupina:S.skupinaOvr}, `oz ${S.user.name} ${stamp}`);
-    S.dirty=false; applyOverrides(); renderAll(); toast("Đã lưu lên GitHub.","ok");
+    S.dirty=false; S.retry=0; S.ovrDel=[]; S.skupDel=[]; clearDraft();
+    applyOverrides(); renderAll(); toast("Đã lưu lên GitHub.","ok");
   }catch(e){
-    toast("Lỗi lưu: "+e.message,"err"); console.error(e);
-    clearTimeout(S.timer); S.timer=setTimeout(sync, 15000);   // zkusit znovu
+    console.error(e);
+    S.retry++;
+    const wait = Math.min(15000 * S.retry, 120000);            // 15s, 30s, 45s… tối đa 2 phút
+    toast(`Chưa lưu được (${e.message}). Thay đổi đã được giữ trong máy, tự thử lại sau ${Math.round(wait/1000)}s.`,"err");
+    clearTimeout(S.timer); S.timer=setTimeout(sync, wait);
   }finally{ S.syncing=false; renderSyncStat(); }
 }
 function mergeById(remote, local){
@@ -931,7 +1011,8 @@ document.addEventListener("change", e=>{
   const sel = e.target.closest("[data-oz]");
   if(sel){
     const c = S.customers.find(x=>x.id===sel.dataset.oz);
-    if(sel.value === c.oz_auto) delete S.overrides[c.id]; else S.overrides[c.id]=sel.value;
+    if(sel.value === c.oz_auto){ delete S.overrides[c.id]; if(!S.ovrDel.includes(c.id)) S.ovrDel.push(c.id); }
+    else { S.overrides[c.id]=sel.value; S.ovrDel = S.ovrDel.filter(k=>k!==c.id); }
     applyOverrides(); markDirty(); renderAll();
   }
   /* dropdown nhóm khách — chỉ admin (NAM) */
@@ -939,8 +1020,13 @@ document.addEventListener("change", e=>{
   if(gs && S.user.role==="admin"){
     const c = S.customers.find(x=>x.id===gs.dataset.skup);
     const v = gs.value;
-    if(v==="__auto" || v===c.skupina_auto) delete S.skupinaOvr[c.id];
-    else S.skupinaOvr[c.id] = {g:v, at:nowISO(), by:S.user.name};
+    if(v==="__auto" || v===c.skupina_auto){
+      delete S.skupinaOvr[c.id];
+      if(!S.skupDel.includes(c.id)) S.skupDel.push(c.id);
+    }else{
+      S.skupinaOvr[c.id] = {g:v, at:nowISO(), by:S.user.name};
+      S.skupDel = S.skupDel.filter(k=>k!==c.id);
+    }
     applyOverrides(); buildFilters(); markDirty(); renderAll();
     toast(v==="__auto" ? `${c.firma}: trả về nhóm tự động (${GROUPS[c.skupina_auto].label})`
                        : `${c.firma}: ${GROUPS[c.skupina].label}${GROUPS[c.skupina].dny==null?" · đã xóa hạn thăm":""}`, "ok");
