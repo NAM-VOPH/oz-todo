@@ -118,7 +118,7 @@ dialog::backdrop{background:#000a}
 </header>
 
 <div class="tabs">
-  <button data-tab="cust" class="active">Danh sách khách hàng</button>
+  <button data-tab="cust" class="active">Danh sách khách hàng <span id="cCust" class="badge" style="background:var(--acc);color:#fff">0</span></button>
   <button data-tab="rekl">Khiếu nại <span id="cRekl" class="badge" style="background:var(--dang);color:#fff">0</span></button>
   <button data-tab="pozn">Ghi chú <span id="cPozn" class="badge" style="background:var(--warn);color:#3a2500">0</span></button>
   <button data-tab="done">Đã hoàn thành <span id="cDone" class="badge" style="background:var(--p5);color:#fff">0</span></button>
@@ -131,7 +131,7 @@ dialog::backdrop{background:#000a}
       <input type="search" id="q" placeholder="Tìm: tên công ty, IČO, điện thoại, email, địa chỉ, okres, ngày mua, ghi chú, khiếu nại…">
       <select id="fGroup"><option value="">— Tất cả nhóm —</option></select>
       <select id="fOkres"><option value="">— Tất cả okres —</option></select>
-      <select id="fOz" class="hidden"><option value="">— Tất cả OZ —</option><option>NAM</option><option>AHUY</option></select>
+      <select id="fOz" class="hidden"><option value="">— Tất cả OZ —</option><option value="NAM">NAM</option><option value="AHUY">AHUY</option></select>
       <select id="fFlag">
         <option value="">— Tất cả —</option>
         <option value="over">Quá hạn thăm</option>
@@ -716,17 +716,42 @@ function visibleCustomers(){
   });
 }
 
+/* Khách trong phạm vi của người đang đăng nhập (admin = tất cả) */
+function scopeCustomers(){
+  if(!S.user) return [];
+  return S.user.role==="admin" ? S.customers : S.customers.filter(c=>c.obchodni_zastupce===S.user.name);
+}
+
 function buildFilters(){
-  const src = S.user.role==="admin" ? S.customers : S.customers.filter(c=>c.obchodni_zastupce===S.user.name);
+  const src = scopeCustomers();
+  const cnt = (fn)=>src.filter(fn).length;
+  const keep = {g:$("#fGroup").value, o:$("#fOkres").value, z:$("#fOz").value, f:$("#fFlag").value};
+
   const gs = [...new Set(src.map(c=>c.skupina_label))].sort((a,b)=>
     (src.find(c=>c.skupina_label===a).priorita)-(src.find(c=>c.skupina_label===b).priorita));
-  $("#fGroup").innerHTML = '<option value="">— Tất cả nhóm —</option>'+gs.map(g=>`<option>${esc(g)}</option>`).join("");
+  $("#fGroup").innerHTML = `<option value="">— Tất cả nhóm — (${src.length})</option>`+
+    gs.map(g=>`<option value="${esc(g)}">${esc(g)} (${cnt(c=>c.skupina_label===g)})</option>`).join("");
+
   const os = [...new Set(src.map(c=>c.okres))].sort((a,b)=>a.localeCompare(b,"cs"));
-  $("#fOkres").innerHTML = '<option value="">— Tất cả okres —</option>'+os.map(o=>`<option>${esc(o)}</option>`).join("");
+  $("#fOkres").innerHTML = `<option value="">— Tất cả okres — (${src.length})</option>`+
+    os.map(o=>`<option value="${esc(o)}">${esc(o)} (${cnt(c=>c.okres===o)})</option>`).join("");
+
+  $("#fOz").innerHTML = `<option value="">— Tất cả OZ — (${src.length})</option>`+
+    ["NAM","AHUY"].map(z=>`<option value="${z}">${z} (${cnt(c=>c.obchodni_zastupce===z)})</option>`).join("");
+
+  $("#fFlag").innerHTML =
+    `<option value="">— Tất cả — (${src.length})</option>`+
+    `<option value="over">Quá hạn thăm (${cnt(c=>c.po_terminu_dni>0)})</option>`+
+    `<option value="rekl">Có khiếu nại (${cnt(c=>taskOf(c.id,"rekl"))})</option>`+
+    `<option value="pozn">Có ghi chú (${cnt(c=>taskOf(c.id,"pozn"))})</option>`;
+
+  // giữ nguyên lựa chọn người dùng đang chọn
+  $("#fGroup").value = keep.g; $("#fOkres").value = keep.o;
+  $("#fOz").value = keep.z;    $("#fFlag").value = keep.f;
 }
 
 /* ===================== render ===================== */
-function renderAll(){ renderCust(); renderTasks(); renderDone(); renderSyncStat(); }
+function renderAll(){ buildFilters(); renderCust(); renderTasks(); renderDone(); renderSyncStat(); }
 
 function noteCell(c, type){
   const t = taskOf(c.id, type);
@@ -758,7 +783,20 @@ function groupCell(c){
 
 function renderCust(){
   const list = visibleCustomers();
-  $("#custCount").textContent = `${list.length} / ${S.customers.length} khách`;
+  const base = scopeCustomers().length;           // AHUY chỉ tính khách của mình
+  const filtered = list.length !== base;
+  const over = list.filter(c=>c.po_terminu_dni>0).length;
+
+  $("#cCust").textContent = list.length;
+  const parts = [];
+  parts.push(filtered ? `<b>${list.length}</b> / ${base} khách` : `<b>${base}</b> khách`);
+  if(over) parts.push(`<span style="color:var(--dang)">${over} quá hạn</span>`);
+  if(S.user.role==="admin" && !$("#fOz").value){
+    const n = list.filter(c=>c.obchodni_zastupce==="NAM").length;
+    parts.push(`NAM ${n} · AHUY ${list.length-n}`);
+  }
+  $("#custCount").innerHTML = parts.join(" · ") + (filtered ? ` <span class="muted">(đang lọc)</span>` : "");
+
   const rows = list.map(c=>{
     const od = c.po_terminu_dni>0;
     const ozSel = S.user.role==="admin"
