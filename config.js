@@ -8,6 +8,6 @@ window.OZ_CONFIG = {
   REPO:   "oz-todo",        // <-- tên repository
   BRANCH: "main",
 
-  AUTOSYNC_MS: 60000,       // đồng bộ tự động 60 giây sau thao tác cuối
+  AUTOSYNC_MS: 120000,      // đồng bộ tự động 2 phút sau thao tác cuối
   MAX_FILE_MB: 5            // giới hạn dung lượng file đính kèm
 };

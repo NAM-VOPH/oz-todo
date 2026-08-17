@@ -382,6 +382,58 @@ async function registerFail(user){
 }
 
 /* ===================== login ===================== */
+/* Giữ đăng nhập trên máy này: sau khi nhập PIN đúng, khóa dữ liệu được cất vào
+   localStorage. F5 / mở lại trình duyệt → vào thẳng, không hỏi PIN nữa.
+   Chỉ hỏi PIN lại khi: bấm "Odhlásit", quá SESSION_DNI ngày không dùng,
+   NAM đổi PIN (keys.json mới), hoặc thiết bị bị chặn. */
+const SESS = "oz_sess", SESSION_DNI = 7;
+
+async function saveSession(name, role, rawKey, wrapped){
+  try{
+    localStorage.setItem(SESS, JSON.stringify({
+      user:name, role, k:bytes2b64(new Uint8Array(rawKey)),
+      w:await sha256hex(JSON.stringify(wrapped)), at:nowISO()}));
+  }catch(e){ console.warn("session:", e); }
+}
+const clearSession = () => localStorage.removeItem(SESS);
+function touchSession(){                      // mỗi lần dùng web thì gia hạn tiếp
+  try{
+    const s = JSON.parse(localStorage.getItem(SESS)||"null");
+    if(s){ s.at = nowISO(); localStorage.setItem(SESS, JSON.stringify(s)); }
+  }catch(e){}
+}
+
+async function resumeSession(){
+  let s;
+  try{ s = JSON.parse(localStorage.getItem(SESS)||"null"); }catch(e){ return false; }
+  if(!s || !s.k) return false;
+  const u = S.keys && S.keys.users[s.user];
+  if(!u){ clearSession(); return false; }
+  if(await sha256hex(JSON.stringify(u.wrapped)) !== s.w){     // NAM đã đổi PIN
+    clearSession(); toast("PIN đã được đổi — cần đăng nhập lại.","err"); return false;
+  }
+  if((Date.now() - new Date(s.at).getTime()) > SESSION_DNI*86400000){
+    clearSession(); return false;                            // quá hạn không dùng
+  }
+  try{
+    S.key = await crypto.subtle.importKey("raw", b642bytes(s.k), "AES-GCM", false, ["encrypt","decrypt"]);
+  }catch(e){ clearSession(); return false; }
+  S.user = {name:s.user, role:s.role};
+  touchSession();
+  await startApp();
+  return true;
+}
+
+/* Phần chung sau khi đã có S.key + S.user (dù đăng nhập bằng PIN hay tự khôi phục). */
+async function startApp(){
+  sessionStorage.setItem("oz_user", S.user.name);
+  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
+  $("#hUser").textContent = S.user.name + (S.user.role==="admin" ? " (admin)" : " (OZ)");
+  if(S.user.role==="admin") $("#fOz").classList.remove("hidden");
+  await loadToken();
+  await loadAll();
+}
+
 $("#lgBtn").onclick = doLogin;
 $("#lgPin").onkeydown = e => { if(e.key==="Enter") doLogin(); };
 
@@ -390,9 +442,12 @@ $("#lgPin").onkeydown = e => { if(e.key==="Enter") doLogin(); };
     S.keys = await fetch("./keys.json?t="+Date.now(),{cache:"no-store"}).then(r=>r.json());
     Object.keys(S.keys.users).forEach(n=>{
       const o=document.createElement("option"); o.textContent=n; $("#lgUser").appendChild(o); });
-    const last = sessionStorage.getItem("oz_user"); if(last) $("#lgUser").value=last;
+    const last = sessionStorage.getItem("oz_user") ||
+                 (JSON.parse(localStorage.getItem(SESS)||"null")||{}).user;
+    if(last) $("#lgUser").value=last;
   }catch(e){ $("#loginErr").textContent="Không tải được keys.json — kiểm tra cài đặt."; }
-  if(await securityCheck()) return;
+  if(await securityCheck()) return;              // bị chặn / khóa → luôn hỏi PIN
+  if(await resumeSession()) return;              // còn phiên trên máy này → vào thẳng
   const lk = getLock();
   if(lk.fails) $("#lgLeft").innerHTML =
     `<span style="color:var(--warn)">Còn ${SEC.max-lk.fails} lần thử trước khi bị khóa</span>`;
@@ -408,6 +463,7 @@ async function doLogin(){
     const kek = await deriveKEK(pin, u.salt, S.keys.iters);
     const raw = await aesDec(u.wrapped, kek);                      // sai PIN -> vyjimka
     S.key  = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt","decrypt"]);
+    S.rawKey = raw;                                                // chỉ dùng để lưu phiên
     S.user = {name, role:u.role};
   }catch(e){
     $("#lgBtn").disabled=false; $("#lgPin").value="";
@@ -418,12 +474,9 @@ async function doLogin(){
   setLock({});                                                     // úspěch -> vynulovat počítadlo
   $("#lgLeft").textContent="";
   $("#lgBtn").disabled=false; $("#loginErr").textContent="";
-  sessionStorage.setItem("oz_user", name);
-  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
-  $("#hUser").textContent = S.user.name + (S.user.role==="admin" ? " (admin)" : " (OZ)");
-  if(S.user.role==="admin") $("#fOz").classList.remove("hidden");
-  await loadToken();
-  await loadAll();
+  await saveSession(name, u.role, S.rawKey, u.wrapped);            // giữ đăng nhập trên máy này
+  S.rawKey = null;
+  await startApp();
 }
 
 /* Token: nejdřív ten uložený v repu (zašifrovaný, odemkne se PINem),
@@ -440,7 +493,17 @@ async function loadToken(){
     if(S.token) S.tokenSrc = "repo";
   }catch(e){ /* token v repu není - jede se jen pro čtení */ }
 }
-$("#btnLogout").onclick = ()=>{ sessionStorage.removeItem("oz_user"); location.reload(); };
+/* Đăng xuất = xóa phiên trên máy này, lần sau phải nhập PIN.
+   Nếu còn thay đổi chưa lưu thì cố lưu lên GitHub trước khi thoát. */
+$("#btnLogout").onclick = async ()=>{
+  if(S.dirty){
+    if(!confirm("Còn thay đổi chưa lưu. Bấm OK để lưu rồi đăng xuất.")) return;
+    try{ await sync(); }catch(e){}
+    if(S.dirty && !confirm("Vẫn chưa lưu được (mạng?). Đăng xuất luôn?\n"
+      + "Dữ liệu vẫn được giữ trong máy và sẽ tự lưu ở lần đăng nhập sau.")) return;
+  }
+  clearSession(); sessionStorage.removeItem("oz_user"); location.reload();
+};
 
 /* ===================== token ===================== */
 $("#btnToken").onclick = ()=>{ $("#tokIn").value = S.token||""; $("#dlgToken").showModal(); };
@@ -640,7 +703,7 @@ async function restoreDraft(){
 }
 
 function markDirty(){
-  S.dirty = true; S.retry = 0; renderSyncStat(); saveDraft();
+  S.dirty = true; S.retry = 0; renderSyncStat(); saveDraft(); touchSession();
   clearTimeout(S.timer);
   S.timer = setTimeout(sync, CFG.AUTOSYNC_MS);
 }
