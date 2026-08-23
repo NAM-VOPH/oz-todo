@@ -83,17 +83,20 @@ def main():
     tmp = tempfile.mkdtemp()
 
     # 1) stahnout stav z GitHubu -------------------------------------------
-    old, old_sha, overrides, done = None, None, {}, []
+    old, old_sha, overrides, skup_ovr, done, open_tasks = None, None, {}, {}, [], []
     if token:
         old, old_sha = get_file(a.owner, a.repo, a.branch, "data/customers.json", token, key)
         ov, _ = get_file(a.owner, a.repo, a.branch, "data/overrides.json", token, key)
         overrides = (ov or {}).get("obchodni_zastupce", {})
+        skup_ovr = (ov or {}).get("skupina", {})       # rucne nastavena skupina (NAM)
         dn, _ = get_file(a.owner, a.repo, a.branch, "data/completed.json", token, key)
         done = (dn or {}).get("tasks", [])
+        tk, _ = get_file(a.owner, a.repo, a.branch, "data/tasks.json", token, key)
+        open_tasks = (tk or {}).get("tasks", [])       # otevrene poznamky = kontakt
 
     ov_path = os.path.join(tmp, "overrides.json")
     with open(ov_path, "w", encoding="utf-8") as f:
-        json.dump({"obchodni_zastupce": overrides}, f, ensure_ascii=False)
+        json.dump({"obchodni_zastupce": overrides, "skupina": skup_ovr}, f, ensure_ascii=False)
 
     # predchozi databaze -> zachova prirazeni obchodniho zastupce
     prev_path = os.path.join(tmp, "previous.json")
@@ -101,16 +104,20 @@ def main():
         with open(prev_path, "w", encoding="utf-8") as f:
             json.dump(old, f, ensure_ascii=False)
 
-    # dokoncene ukoly -> navstevy, resetuji termin navstevy
+    # poznamky (otevrene i dokoncene) -> "ngay lien lac cuoi", resetuji termin
     done_path = os.path.join(tmp, "completed.json")
     with open(done_path, "w", encoding="utf-8") as f:
         json.dump({"tasks": done}, f, ensure_ascii=False)
+    tasks_path = os.path.join(tmp, "tasks.json")
+    with open(tasks_path, "w", encoding="utf-8") as f:
+        json.dump({"tasks": open_tasks}, f, ensure_ascii=False)
 
     # 2) prepocitat ---------------------------------------------------------
     out = os.path.join(tmp, "customers.json")
     cmd = [sys.executable, os.path.join(here, "build_db.py"),
            "--odberatele", a.odberatele, "--prodeje", a.prodeje,
-           "--out", out, "--overrides", ov_path, "--completed", done_path]
+           "--out", out, "--overrides", ov_path, "--completed", done_path,
+           "--tasks", tasks_path]
     if old:
         cmd += ["--previous", prev_path]
     subprocess.run(cmd, check=True)
@@ -121,7 +128,8 @@ def main():
     oldm = {c["id"]: c for c in (old or {}).get("customers", [])}
     newm = {c["id"]: c for c in new["customers"]}
     added = [c for i, c in newm.items() if i not in oldm]
-    moved = [(oldm[i]["skupina_label"], c["skupina_label"], c["firma"])
+    moved = [(oldm[i]["skupina_label"], c["skupina_label"], c["firma"],
+              " (rucne %s)" % c.get("skupina_by", "") if c.get("skupina_rucne") else "")
              for i, c in newm.items()
              if i in oldm and oldm[i]["skupina_label"] != c["skupina_label"]]
     over = sorted([c for c in new["customers"] if (c.get("po_terminu_dni") or 0) > 0],
@@ -132,8 +140,8 @@ def main():
         print("  + %-40s %-22s %s" % (c["firma"][:40], c["okres"], c["obchodni_zastupce"]))
     if moved:
         print("Zmena skupiny (%d):" % len(moved))
-        for o, n, f in moved[:40]:
-            print("  ~ %-40s %s -> %s" % (f[:40], o, n))
+        for o, n, f, man in moved[:40]:
+            print("  ~ %-40s %s -> %s%s" % (f[:40], o, n, man))
     print("Po termínu navstevy: %d" % len(over))
     for c in over[:20]:
         print("  ! %-40s %-18s %3d dni  %s" % (c["firma"][:40], c["skupina_label"],
