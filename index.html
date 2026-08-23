@@ -162,6 +162,7 @@ dialog::backdrop{background:#000a}
         <th data-s="obrat_celkem">Tổng tiền</th>
         <th data-s="prvni_nakup">Mua đầu</th>
         <th data-s="posledni_nakup">Mua cuối</th>
+        <th data-s="posledni_kontakt">Liên lạc cuối</th>
         <th data-s="termin_do">Hạn thăm</th>
         <th data-s="obchodni_zastupce">OZ</th>
         <th>Ghi chú</th>
@@ -651,15 +652,53 @@ function applySkupina(c){
   recalcTermin(c);
 }
 
-/* Hạn thăm = (mốc muộn hơn giữa mua gần nhất / ngày tạo và lần thăm cuối) + số ngày của nhóm.
+/* ===== Ngày liên lạc cuối =====
+   Lấy từ ghi chú (chỉ "pozn", khiếu nại không tính). Ưu tiên ngày OZ tự nhập
+   trong ô "Ngày liên lạc" (t.kontakt); để trống thì lấy ngày nhập / sửa ghi chú
+   (ghi chú đã Hotovo thì lấy done_at). Khách chưa từng có ghi chú → ngày mua cuối,
+   không có đơn nào → ngày đăng ký. Giống read_kontakty() trong scripts/build_db.py. */
+function taskKontakt(t){
+  if(t.kontakt) return {d:t.kontakt.slice(0,10), rucne:true};
+  const iso = t.done_at || t.updated_at || t.created_at;
+  return iso ? {d:iso.slice(0,10), rucne:false} : null;
+}
+
+function refreshKontakty(){
+  const best = {};
+  S.tasks.concat(S.done).forEach(t=>{
+    if(t.type!=="pozn" || t._deleted) return;
+    const k = taskKontakt(t); if(!k) return;
+    const cur = best[t.cust_id];
+    if(!cur || k.d > cur.d)
+      best[t.cust_id] = {d:k.d, rucne:k.rucne, hotovo:!!t.done_at, text:t.text||"",
+                         by:t.done_by||t.updated_by||t.created_by||""};
+  });
+  S.customers.forEach(c=>{
+    const b = best[c.id];
+    if(b){
+      c.posledni_kontakt = b.d;
+      c.kontakt_zdroj = b.rucne ? "pozn_rucne" : "pozn";
+      c.kontakt_by = b.by; c.kontakt_text = b.text;
+    }else if(c.posledni_nakup){
+      c.posledni_kontakt = c.posledni_nakup; c.kontakt_zdroj = "nakup";
+      c.kontakt_by = ""; c.kontakt_text = "";
+    }else{
+      c.posledni_kontakt = c.vytvoreno || null;
+      c.kontakt_zdroj = c.vytvoreno ? "vytvoreno" : null;
+      c.kontakt_by = ""; c.kontakt_text = "";
+    }
+    c.dni_od_kontaktu = c.posledni_kontakt
+      ? Math.floor((Date.now() - new Date(c.posledni_kontakt).getTime())/86400000) : null;
+    recalcTermin(c);
+  });
+}
+
+/* Hạn thăm = ngày liên lạc cuối + số ngày của nhóm.
    Nhóm không có số ngày (kể cả "Khách không lấy hàng nữa") → xóa hạn thăm. */
 function recalcTermin(c){
   const dny = (GROUPS[c.skupina]||{}).dny;
   if(dny == null){ c.termin_do = null; c.po_terminu_dni = 0; return; }
-  const base0 = c.skupina==="khach moi" ? c.vytvoreno : c.posledni_nakup;
-  let base = base0 ? new Date(base0) : null;
-  const nav = c.posledni_navsteva ? new Date(c.posledni_navsteva) : null;
-  if(nav && (!base || nav > base)) base = nav;
+  const base = c.posledni_kontakt ? new Date(c.posledni_kontakt) : null;
   if(!base){ c.termin_do = null; c.po_terminu_dni = 0; return; }
   const due = new Date(base.getTime() + dny*86400000);
   c.termin_do = due.toISOString().slice(0,10);
@@ -761,20 +800,25 @@ window.addEventListener("beforeunload", e=>{ if(S.dirty){ e.preventDefault(); e.
 /* ===================== operace nad úkoly ===================== */
 function taskOf(custId, type){ return S.tasks.find(t=>t.cust_id===custId && t.type===type); }
 
-function setTask(cust, type, text){
+/* kontakt = ngày liên lạc OZ nhập tay trong ghi chú ("" = để trống, lấy ngày ghi) */
+function setTask(cust, type, text, kontakt){
   text = (text||"").trim();
+  kontakt = (kontakt||"").slice(0,10);
   let t = taskOf(cust.id, type);
   if(!text){
     if(t){ t._deleted=true; t.updated_at=nowISO(); S.tasks=S.tasks.filter(x=>x!==t); markDirty(); renderAll(); }
     return;
   }
   if(t){
-    if(t.text===text) return;
+    if(t.text===text && (t.kontakt||"")===kontakt) return;
     t.text=text; t.updated_at=nowISO(); t.updated_by=S.user.name;
+    if(type==="pozn"){ if(kontakt) t.kontakt=kontakt; else delete t.kontakt; }
   }else{
-    S.tasks.push({ id:uid(), cust_id:cust.id, ico:cust.ico, firma:cust.firma, type, text,
+    const n = { id:uid(), cust_id:cust.id, ico:cust.ico, firma:cust.firma, type, text,
       files:[], created_at:nowISO(), created_by:S.user.name,
-      updated_at:nowISO(), updated_by:S.user.name });
+      updated_at:nowISO(), updated_by:S.user.name };
+    if(type==="pozn" && kontakt) n.kontakt = kontakt;
+    S.tasks.push(n);
   }
   markDirty(); renderAll();
 }
@@ -894,15 +938,28 @@ function buildFilters(){
 }
 
 /* ===================== render ===================== */
-function renderAll(){ buildFilters(); renderCust(); renderTasks(); renderDone(); renderSyncStat(); }
+function renderAll(){ refreshKontakty(); buildFilters(); renderCust(); renderTasks(); renderDone(); renderSyncStat(); }
+
+/* Cột "Liên lạc cuối" — ngày lấy từ ghi chú, khách chưa có ghi chú thì lấy ngày mua cuối. */
+function kontaktCell(c){
+  if(!c.posledni_kontakt) return "—";
+  const zdroj = {pozn_rucne:"ghi chú (nhập tay)", pozn:"ghi chú",
+                 nakup:"ngày mua cuối", vytvoreno:"ngày đăng ký"}[c.kontakt_zdroj] || "";
+  const note = c.kontakt_zdroj==="pozn" || c.kontakt_zdroj==="pozn_rucne";
+  return `<span style="${note?"color:var(--ok)":""}" title="${esc(zdroj)}${c.kontakt_text?" · "+esc(c.kontakt_text):""}">${note?"✓ ":""}${fmtD(c.posledni_kontakt)}</span>
+    <div class="muted">${c.dni_od_kontaktu!=null?c.dni_od_kontaktu+" ngày":""}</div>
+    <div class="muted" style="font-size:10px">${esc(zdroj)}${note&&c.kontakt_by?" · "+esc(c.kontakt_by):""}</div>`;
+}
 
 function noteCell(c, type){
   const t = taskOf(c.id, type);
   const cls = type==="rekl" ? "rekl" : "pozn";
   if(!t) return `<div class="cellbox empty" data-ed="${c.id}|${type}">+ thêm…</div>`;
   const files = (t.files||[]).map((f,i)=>`<span class="chip" style="cursor:pointer" data-file="${t.id}|${i}">📎 ${esc(f.name)}</span>`).join("");
+  const k = type==="pozn" ? taskKontakt(t) : null;
   return `<div class="cellbox" data-ed="${c.id}|${type}">${esc(t.text).replace(/\n/g,"<br>")}</div>
     <div class="chips">${files}</div>
+    ${k?`<div class="small" style="color:var(--ok)">📅 liên lạc ${fmtD(k.d)}${k.rucne?"":" (ngày ghi)"}</div>`:""}
     <div class="small muted">${esc(t.updated_by||t.created_by)} · ${fmtDT(t.updated_at||t.created_at)}</div>
     <div class="row small" style="margin-top:3px">
       <button class="ok" style="padding:2px 8px;font-size:11px" data-done="${t.id}">Hotovo</button>
@@ -961,13 +1018,14 @@ function renderCust(){
       <td class="num">${czk(c.obrat_celkem)}</td>
       <td class="num small">${fmtD(c.prvni_nakup)}</td>
       <td class="num small">${fmtD(c.posledni_nakup)}${c.dni_od_nakupu!=null?`<div class="muted">${c.dni_od_nakupu} ngày</div>`:""}</td>
-      <td class="num small ${od?"overdue":""}">${fmtD(c.termin_do)||"—"}${od?`<div>quá ${c.po_terminu_dni} ngày</div>`:""}${c.posledni_navsteva?`<div class="muted" style="color:var(--ok)" title="${esc(c.navsteva_text)}">✓ thăm ${fmtD(c.posledni_navsteva)}${c.navsteva_by?" · "+esc(c.navsteva_by):""}</div>`:""}</td>
+      <td class="num small">${kontaktCell(c)}</td>
+      <td class="num small ${od?"overdue":""}">${fmtD(c.termin_do)||"—"}${od?`<div>quá ${c.po_terminu_dni} ngày</div>`:""}</td>
       <td class="nowrap">${ozSel}</td>
       <td>${noteCell(c,"pozn")}</td>
       <td>${noteCell(c,"rekl")}</td>
     </tr>`;
   }).join("");
-  $("#tCust tbody").innerHTML = rows || `<tr><td colspan="14" class="muted" style="padding:24px">Không có khách hàng nào khớp bộ lọc.</td></tr>`;
+  $("#tCust tbody").innerHTML = rows || `<tr><td colspan="15" class="muted" style="padding:24px">Không có khách hàng nào khớp bộ lọc.</td></tr>`;
   if(S.highlight){ const r=$(`#tCust tbody tr[data-id="${S.highlight}"]`); if(r) r.scrollIntoView({block:"center"}); }
 }
 
@@ -981,7 +1039,8 @@ function taskRows(type, q){
     <td><b>${esc(t.firma)}</b></td><td class="nowrap">${esc(t.ico)}</td>
     <td style="max-width:460px">${esc(t.text).replace(/\n/g,"<br>")}</td>
     <td class="small">${(t.files||[]).map((f,i)=>`<span class="chip" style="cursor:pointer" data-file="${t.id}|${i}">📎 ${esc(f.name)}</span>`).join("<br>")}</td>
-    <td class="nowrap small">${fmtDT(t.created_at)}</td>
+    <td class="nowrap small">${fmtDT(t.created_at)}${type==="pozn"&&taskKontakt(t)
+      ? `<div style="color:var(--ok)">📅 liên lạc ${fmtD(taskKontakt(t).d)}</div>` : ""}</td>
     <td class="small">${esc(t.created_by)}</td>
     <td class="nowrap small">${t.updated_at!==t.created_at?fmtDT(t.updated_at)+"<br>"+esc(t.updated_by):"—"}</td>
     <td><button class="ok" style="padding:2px 8px;font-size:11px" data-done="${t.id}">Hotovo</button></td>
@@ -1045,15 +1104,34 @@ document.addEventListener("click", e=>{
     const cust = S.customers.find(c=>c.id===cid);
     const t = taskOf(cid,type);
     box.dataset.editing="1";
+    const wrap = document.createElement("div");
     const ta = document.createElement("textarea");
     ta.className="ed"; ta.value = t ? t.text : "";
     ta.placeholder = type==="rekl" ? "Nội dung khiếu nại…" : "Ghi chú…";
-    box.replaceWith(ta); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
-    const save=()=>{ ta.removeEventListener("blur",save); setTask(cust,type,ta.value); renderCust(); };
-    ta.addEventListener("blur", save);
-    ta.addEventListener("keydown", ev=>{
-      if(ev.key==="Escape"){ ta.removeEventListener("blur",save); renderCust(); }
-      if(ev.key==="Enter" && (ev.ctrlKey||ev.metaKey)) ta.blur();
+    wrap.appendChild(ta);
+    /* ô ngày liên lạc — chỉ ghi chú; để trống = lấy ngày viết ghi chú */
+    let dtIn = null;
+    if(type==="pozn"){
+      const lab = document.createElement("label");
+      lab.className = "small muted";
+      lab.style.cssText = "display:flex;gap:6px;align-items:center;margin-top:4px";
+      dtIn = document.createElement("input");
+      dtIn.type = "date"; dtIn.style.cssText = "padding:2px 6px;font-size:12px";
+      dtIn.value = (t && t.kontakt) ? t.kontakt.slice(0,10) : "";
+      dtIn.title = "Để trống = lấy ngày viết ghi chú";
+      lab.append("Ngày liên lạc:", dtIn);
+      wrap.appendChild(lab);
+    }
+    box.replaceWith(wrap); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    let closed = false;
+    const stop = ()=>{ closed = true; wrap.removeEventListener("focusout", out); };
+    const save = ()=>{ if(closed) return; stop();
+      setTask(cust, type, ta.value, dtIn ? dtIn.value : ""); renderCust(); };
+    const out = ()=>setTimeout(()=>{ if(!wrap.contains(document.activeElement)) save(); }, 0);
+    wrap.addEventListener("focusout", out);
+    wrap.addEventListener("keydown", ev=>{
+      if(ev.key==="Escape"){ stop(); renderCust(); }
+      if(ev.key==="Enter" && (ev.ctrlKey||ev.metaKey)) save();
     });
   }
 });
@@ -1136,6 +1214,7 @@ document.addEventListener("click", e=>{
     <div>Tổng tiền hàng</div><div>${czk(c.obrat_celkem)}</div>
     <div>Mua đầu tiên</div><div>${fmtD(c.prvni_nakup)||"—"}</div>
     <div>Mua gần nhất</div><div>${fmtD(c.posledni_nakup)||"—"} ${c.posledni_doklad?`(${esc(c.posledni_doklad)})`:""}</div>
+    <div>Liên lạc cuối</div><div>${fmtD(c.posledni_kontakt)||"—"} ${c.dni_od_kontaktu!=null?`<span class="muted small">(${c.dni_od_kontaktu} ngày · ${esc({pozn_rucne:"ghi chú, nhập tay",pozn:"ghi chú",nakup:"ngày mua cuối",vytvoreno:"ngày đăng ký"}[c.kontakt_zdroj]||"—")})</span>`:""}</div>
     <div>Hạn thăm</div><div>${fmtD(c.termin_do)||"—"} ${c.po_terminu_dni>0?`<span class="overdue">quá ${c.po_terminu_dni} ngày</span>`:""}</div>
     <div>Ngày đăng ký</div><div>${fmtD(c.vytvoreno)||"—"}</div>
     <div>Obchodní zástupce</div><div>${esc(c.obchodni_zastupce)} ${c.oz_rucne?"(sửa tay)":"(tự động)"}</div>
@@ -1145,9 +1224,11 @@ document.addEventListener("click", e=>{
 
 /* export CSV z hotových úkolů */
 $("#btnExport").onclick = ()=>{
-  const rows = [["Firma","ICO","Typ","Text","Vytvoreno","Vytvoril","Hotovo","Dokoncil"]];
+  const rows = [["Firma","ICO","Typ","Text","Ngay lien lac","Vytvoreno","Vytvoril","Hotovo","Dokoncil"]];
   doneList().forEach(t=>rows.push([t.firma,t.ico,t.type==="rekl"?"Khieu nai":"Ghi chu",
-    (t.text||"").replace(/\n/g," "),t.created_at,t.created_by,t.done_at,t.done_by]));
+    (t.text||"").replace(/\n/g," "),
+    t.type==="pozn"&&taskKontakt(t)?taskKontakt(t).d:"",
+    t.created_at,t.created_by,t.done_at,t.done_by]));
   const csv = "﻿"+rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(";")).join("\n");
   const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
