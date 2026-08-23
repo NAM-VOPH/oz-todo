@@ -39,10 +39,13 @@ GROUPS = {
     "khach thuong":     (4, 60,  "Návštěva 1x / 60 dní"),
     "khach tham khao":  (5, None, "Kontakt kdykoli / návštěva při cestě"),
     "khach khong tiem nang": (6, None, "Kontakt kdykoli / návštěva při cestě"),
+    "khach ngung mua":  (7, None, "Neodebírá – bez termínu návštěvy"),
 }
-# Ktere dokoncene ukoly se pocitaji jako navsteva/kontakt a resetuji termin.
-# "pozn" = ghi chú (OZ byl u zakaznika), "rekl" = khiếu nại (take kontakt).
-NAVSTEVA_TYPY = {"pozn", "rekl"}
+# Skupiny, ktere nikdy nedostanou termin navstevy (interval je None).
+# "khach ngung mua" = khach khong lay hang nua - nastavuje jen NAM rucne na webu.
+# Ktere ukoly se pocitaji jako kontakt se zakaznikem (= "ngay lien lac cuoi")
+# a resetuji termin navstevy. Jen "pozn" = ghi chú; reklamace (rekl) se nepocita.
+KONTAKT_TYPY = {"pozn"}
 
 GROUP_LABEL = {
     "khach lon": "Khách lớn",
@@ -51,6 +54,7 @@ GROUP_LABEL = {
     "khach thuong": "Khách thường",
     "khach tham khao": "Khách tham khảo",
     "khach khong tiem nang": "Khách không tiềm năng",
+    "khach ngung mua": "Khách không lấy hàng nữa",
 }
 
 
@@ -236,46 +240,100 @@ def classify(cust, today):
     return "khach khong tiem nang"
 
 
-def read_navstevy(path):
-    """data/completed.json -> {cust_id: {"datum": dt, "by": str, "text": str}}.
+def skupina_override(cust, ovr):
+    """Rucne nastavena skupina (dropdown na webu, jen NAM).
 
-    Dokonceny ukol znamena, ze OZ zakaznika resil (navstiva / kontakt), takze
-    se od toho dne pocita novy termin. Bere se vzdy nejnovejsi done_at.
+    ovr = hodnota z overrides.json["skupina"][id]; bud retezec s klicem skupiny,
+    nebo {"g": klic, "at": ISO datum zmeny, "by": jmeno}.
+    Vraci (klic_skupiny | None, zdroj). Rucni volba PLATI VZDY, krome pripadu,
+    kdy zakaznik po datu zmeny udelal novou objednavku - pak se vraci
+    k automatickemu zarazeni (napr. "prestal odebirat" a zase zacal nakupovat).
     """
-    if not path or not os.path.exists(path):
-        return {}
-    with open(path, encoding="utf-8") as f:
-        tasks = json.load(f).get("tasks", [])
+    if not ovr:
+        return None, None
+    if isinstance(ovr, str):
+        g, at, by = ovr, None, ""
+    else:
+        g, at, by = ovr.get("g"), parse_iso(ovr.get("at")), ovr.get("by", "")
+    if g not in GROUPS:
+        return None, None
+    posl = parse_dt(cust.get("posledni_nakup"))
+    if at and posl and posl > at:
+        return None, None                      # nova objednavka -> zpet na automat
+    return g, {"at": d(at), "by": by}
+
+
+def task_kontakt_datum(t):
+    """Datum kontaktu jedne poznamky.
+
+    Prednost ma rucne zadane datum ("kontakt" - policko na webu u ghi chú),
+    jinak se bere datum zapisu / posledni upravy (u dokoncene poznamky done_at).
+    """
+    man = parse_dt(t.get("kontakt"))
+    if man:
+        return man, True
+    dt = parse_iso(t.get("done_at")) or parse_iso(t.get("updated_at")) \
+        or parse_iso(t.get("created_at"))
+    return dt, False
+
+
+def read_kontakty(*paths):
+    """tasks.json + completed.json -> {cust_id: {...} } - posledni kontakt.
+
+    Pocitaji se jen poznamky (KONTAKT_TYPY). Bere se poznamka s nejnovejsim
+    datem kontaktu (rucne zadane datum ma prednost pred datem zapisu).
+    """
     out = {}
-    for t in tasks:
-        if t.get("type") not in NAVSTEVA_TYPY:
+    for path in paths:
+        if not path or not os.path.exists(path):
             continue
-        cid = str(t.get("cust_id") or "")
-        dt = parse_iso(t.get("done_at"))
-        if not cid or not dt:
-            continue
-        cur = out.get(cid)
-        if cur is None or dt > cur["datum"]:
-            out[cid] = {"datum": dt, "by": t.get("done_by") or "",
-                        "text": (t.get("text") or "")[:200], "typ": t.get("type")}
+        with open(path, encoding="utf-8") as f:
+            tasks = json.load(f).get("tasks", [])
+        for t in tasks:
+            if t.get("type") not in KONTAKT_TYPY:
+                continue
+            cid = str(t.get("cust_id") or "")
+            dt, rucne = task_kontakt_datum(t)
+            if not cid or not dt:
+                continue
+            cur = out.get(cid)
+            if cur is None or dt > cur["datum"]:
+                out[cid] = {"datum": dt, "rucne": rucne,
+                            "by": t.get("done_by") or t.get("updated_by")
+                                  or t.get("created_by") or "",
+                            "text": (t.get("text") or "")[:200],
+                            "hotovo": bool(t.get("done_at"))}
     return out
+
+
+def posledni_kontakt(cust, kont):
+    """(datum, zdroj) posledniho kontaktu.
+
+    1) datum z poznamky (rucne zadane, jinak datum zapisu poznamky)
+    2) zakaznik bez poznamky -> datum posledniho nakupu
+    3) bez nakupu (novy zakaznik) -> datum zalozeni
+    """
+    if kont:
+        return kont["datum"], ("pozn_rucne" if kont["rucne"] else "pozn")
+    posl = parse_dt(cust.get("posledni_nakup"))
+    if posl:
+        return posl, "nakup"
+    vytv = parse_dt(cust.get("vytvoreno"))
+    if vytv:
+        return vytv, "vytvoreno"
+    return None, None
 
 
 def deadline(cust, today):
     """Datum, do kdy je treba kontakt, + kolik dni je po termínu.
 
-    Zaklad = pozdejsi z (posledni nakup / registrace) a (posledni navsteva,
-    tj. dokonceny ukol na webu). Kdyz OZ zakaznika navstivi a odskrtne ukol,
-    termin se timto dnem resetuje.
+    Zaklad = "ngay lien lac cuoi" (cust["posledni_kontakt"]), tedy datum
+    z posledni poznamky; u zakaznika bez poznamky datum posledniho nakupu.
     """
-    g = cust["skupina"]
-    interval = GROUPS[g][1]
+    interval = GROUPS[cust["skupina"]][1]
     if interval is None:
         return None, 0
-    base = parse_dt(cust["vytvoreno"]) if g == "khach moi" else parse_dt(cust["posledni_nakup"])
-    nav = parse_dt(cust.get("posledni_navsteva"))
-    if nav and (base is None or nav > base):
-        base = nav
+    base = parse_dt(cust.get("posledni_kontakt"))
     if not base:
         return None, 0
     due = base + timedelta(days=interval)
@@ -292,14 +350,18 @@ def main():
     ap.add_argument("--previous", default=None,
                     help="predchozi customers.json - zachova prirazeni OZ")
     ap.add_argument("--completed", default=None,
-                    help="data/completed.json - dokoncene ukoly = navstevy, resetuji termin")
+                    help="data/completed.json - dokoncene poznamky = kontakt, resetuji termin")
+    ap.add_argument("--tasks", default=None,
+                    help="data/tasks.json - otevrene poznamky = kontakt, resetuji termin")
     a = ap.parse_args()
 
     today = datetime.now()
-    overrides = {}
+    overrides, skup_ovr = {}, {}
     if os.path.exists(a.overrides):
         with open(a.overrides, encoding="utf-8") as f:
-            overrides = json.load(f).get("obchodni_zastupce", {})
+            _ov = json.load(f)
+        overrides = _ov.get("obchodni_zastupce", {})
+        skup_ovr = _ov.get("skupina", {})            # rucne nastavena skupina (NAM)
 
     # predchozi verze databaze - drzi prirazeni obchodniho zastupce
     previous = {}
@@ -309,7 +371,7 @@ def main():
 
     odb = read_odberatele(a.odberatele)
     sales = read_prodeje(a.prodeje)
-    navstevy = read_navstevy(a.completed)
+    kontakty = read_kontakty(a.tasks, a.completed)
 
     customers, warn_psc, warn_oz = [], [], []
     for o in odb:
@@ -323,14 +385,30 @@ def main():
         c["dni_od_nakupu"] = ((today - s["posledni"]).days
                               if s.get("posledni") else None)
 
-        # posledni navsteva = nejnovejsi dokonceny ukol na webu
-        nav = navstevy.get(c["id"])
-        c["posledni_navsteva"] = d(nav["datum"]) if nav else None
-        c["navsteva_by"] = nav["by"] if nav else ""
-        c["navsteva_text"] = nav["text"] if nav else ""
-        c["dni_od_navstevy"] = (today - nav["datum"]).days if nav else None
+        # ngay lien lac cuoi = datum posledni poznamky (rucne zadane ma prednost),
+        # u zakaznika bez poznamky = datum posledniho nakupu
+        kon = kontakty.get(c["id"])
+        kdat, kzdroj = posledni_kontakt(c, kon)
+        c["posledni_kontakt"] = d(kdat)
+        c["kontakt_zdroj"] = kzdroj                  # pozn_rucne | pozn | nakup | vytvoreno
+        c["kontakt_by"] = kon["by"] if kon else ""
+        c["kontakt_text"] = kon["text"] if kon else ""
+        c["dni_od_kontaktu"] = (today - kdat).days if kdat else None
+        # zpetna kompatibilita se starsim webem
+        c["posledni_navsteva"] = d(kon["datum"]) if kon else None
+        c["navsteva_by"] = c["kontakt_by"]
+        c["navsteva_text"] = c["kontakt_text"]
+        c["dni_od_navstevy"] = ((today - kon["datum"]).days if kon else None)
 
-        c["skupina"] = classify(c, today)
+        # --- skupina -----------------------------------------------------
+        # Automaticky vypocet, ktery muze NAM prebit dropdownem na webu.
+        # Rucni volba se automaticky nemeni (viz skupina_override).
+        c["skupina_auto"] = classify(c, today)
+        g_man, g_info = skupina_override(c, skup_ovr.get(c["id"]))
+        c["skupina"] = g_man or c["skupina_auto"]
+        c["skupina_rucne"] = bool(g_man)
+        c["skupina_zmena"] = (g_info or {}).get("at")
+        c["skupina_by"] = (g_info or {}).get("by", "")
         c["skupina_label"] = GROUP_LABEL[c["skupina"]]
         c["priorita"] = GROUPS[c["skupina"]][0]
         c["priorita_text"] = GROUPS[c["skupina"]][2]
@@ -386,6 +464,12 @@ def main():
     for k, v in sorted(Counter(c["skupina_label"] for c in customers).items()):
         print("  %-24s %d" % (k, v))
     print("  OZ:", dict(Counter(c["obchodni_zastupce"] for c in customers)))
+    rucne = [c for c in customers if c.get("skupina_rucne")]
+    if rucne:
+        print("  Skupina nastavena rucne (NAM na webu): %d" % len(rucne))
+        for c in rucne[:30]:
+            print("    %-38s -> %-26s (auto: %s)"
+                  % (c["firma"][:38], c["skupina_label"], GROUP_LABEL[c["skupina_auto"]]))
     novi = [c for c in customers if c.get("oz_novy")]
     if previous:
         print("  OZ prirazen automaticky jen novym zakaznikum: %d" % len(novi))
