@@ -675,7 +675,8 @@ function refreshKontakty(){
   });
   S.customers.forEach(c=>{
     const b = best[c.id];
-    if(b){
+    /* Lấy ngày GẦN NHẤT trong hai ngày: ghi chú và mua hàng. Bằng nhau → ghi chú. */
+    if(b && (!c.posledni_nakup || b.d >= c.posledni_nakup)){
       c.posledni_kontakt = b.d;
       c.kontakt_zdroj = b.rucne ? "pozn_rucne" : "pozn";
       c.kontakt_by = b.by; c.kontakt_text = b.text;
@@ -940,7 +941,7 @@ function buildFilters(){
 /* ===================== render ===================== */
 function renderAll(){ refreshKontakty(); buildFilters(); renderCust(); renderTasks(); renderDone(); renderSyncStat(); }
 
-/* Cột "Liên lạc cuối" — ngày lấy từ ghi chú, khách chưa có ghi chú thì lấy ngày mua cuối. */
+/* Cột "Liên lạc cuối" — lấy ngày gần nhất giữa ngày ghi chú và ngày mua hàng. */
 function kontaktCell(c){
   if(!c.posledni_kontakt) return "—";
   const zdroj = {pozn_rucne:"ghi chú (nhập tay)", pozn:"ghi chú",
