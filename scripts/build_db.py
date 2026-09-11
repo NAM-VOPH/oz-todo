@@ -33,7 +33,7 @@ TIER_HIGH = 300000         # hranice pro velkeho zakaznika
 
 # skupina -> (poradi priority, interval navstevy ve dnech nebo None, text priority)
 GROUPS = {
-    "khach lon":        (1, 21,  "Návštěva 1x / 21 dní"),
+    "khach lon":        (1, 28,  "Návštěva 1x / 28 dní"),
     "khach tiem nang":  (2, 30,  "Návštěva 1x / 30 dní"),
     "khach moi":        (3, 90,  "Kontakt / návštěva do 3 měsíců od registrace"),
     "khach thuong":     (4, 60,  "Návštěva 1x / 60 dní"),
@@ -309,13 +309,16 @@ def read_kontakty(*paths):
 def posledni_kontakt(cust, kont):
     """(datum, zdroj) posledniho kontaktu.
 
-    1) datum z poznamky (rucne zadane, jinak datum zapisu poznamky)
-    2) zakaznik bez poznamky -> datum posledniho nakupu
-    3) bez nakupu (novy zakaznik) -> datum zalozeni
+    Bere se NOVEJSI ze dvou datumu:
+      - datum z poznamky (rucne zadane, jinak datum zapisu poznamky)
+      - datum posledniho nakupu
+    Pri shode vyhrava poznamka. Zakaznik bez poznamky i bez nakupu
+    -> datum zalozeni.
     """
-    if kont:
-        return kont["datum"], ("pozn_rucne" if kont["rucne"] else "pozn")
+    kdat = kont["datum"] if kont else None
     posl = parse_dt(cust.get("posledni_nakup"))
+    if kdat and (posl is None or kdat >= posl):
+        return kdat, ("pozn_rucne" if kont["rucne"] else "pozn")
     if posl:
         return posl, "nakup"
     vytv = parse_dt(cust.get("vytvoreno"))
@@ -327,8 +330,8 @@ def posledni_kontakt(cust, kont):
 def deadline(cust, today):
     """Datum, do kdy je treba kontakt, + kolik dni je po termínu.
 
-    Zaklad = "ngay lien lac cuoi" (cust["posledni_kontakt"]), tedy datum
-    z posledni poznamky; u zakaznika bez poznamky datum posledniho nakupu.
+    Zaklad = "ngay lien lac cuoi" (cust["posledni_kontakt"]), tedy novejsi
+    z datumu posledni poznamky a datumu posledniho nakupu.
     """
     interval = GROUPS[cust["skupina"]][1]
     if interval is None:
@@ -385,8 +388,8 @@ def main():
         c["dni_od_nakupu"] = ((today - s["posledni"]).days
                               if s.get("posledni") else None)
 
-        # ngay lien lac cuoi = datum posledni poznamky (rucne zadane ma prednost),
-        # u zakaznika bez poznamky = datum posledniho nakupu
+        # ngay lien lac cuoi = novejsi z (datum posledni poznamky, datum
+        # posledniho nakupu); pri shode vyhrava poznamka
         kon = kontakty.get(c["id"])
         kdat, kzdroj = posledni_kontakt(c, kon)
         c["posledni_kontakt"] = d(kdat)
