@@ -22,9 +22,18 @@ from psc_okres import psc_to_okres  # noqa: E402
 import openpyxl  # noqa: E402
 
 # ---------------------------------------------------------------- konfigurace
-# kraje, ktere patri AHUY (vse ostatni -> NAM)
-AHUY_KRAJE = {"Ústecký", "Liberecký", "Královéhradecký",
-              "Hlavní město Praha", "Středočeský"}
+# kraje podle obchodniho zastupce (vse ostatni -> NAM).
+# POZOR: plati jen pro zakazniky, kteri jeste nejsou v databazi.
+AHUY_KRAJE = {"Ústecký", "Hlavní město Praha", "Středočeský"}
+TIEN_KRAJE = {"Liberecký", "Královéhradecký", "Pardubický"}
+
+
+def oz_podle_kraje(kraj):
+    if kraj in TIEN_KRAJE:
+        return "TIEN"
+    if kraj in AHUY_KRAJE:
+        return "AHUY"
+    return "NAM"
 
 NEW_CUSTOMER_DAYS = 90     # "khach moi" = vytvoren do 90 dni a bez objednavky
 RECENT_ORDER_DAYS = 120    # "4 mesice"
@@ -421,7 +430,7 @@ def main():
         # Pravidlo podle kraje se pouzije POUZE u zakaznika, ktery jeste
         # v databazi nebyl. U znameho zakaznika se drzi drivejsi prirazeni,
         # i kdyby se mu zmenila adresa. Menit smi jen NAM (overrides.json).
-        c["oz_kraj"] = "AHUY" if c["kraj"] in AHUY_KRAJE else "NAM"
+        c["oz_kraj"] = oz_podle_kraje(c["kraj"])
         prev = previous.get(c["id"])
         c["oz_auto"] = prev.get("oz_auto", c["oz_kraj"]) if prev else c["oz_kraj"]
         c["obchodni_zastupce"] = overrides.get(c["id"], c["oz_auto"])
@@ -454,6 +463,7 @@ def main():
             "hranice_stredni": TIER_MID,
             "hranice_velky": TIER_HIGH,
             "ahuy_kraje": sorted(AHUY_KRAJE),
+            "tien_kraje": sorted(TIEN_KRAJE),
         },
         "customers": customers,
     }
