@@ -131,7 +131,7 @@ dialog::backdrop{background:#000a}
       <input type="search" id="q" placeholder="Tìm: tên công ty, IČO, điện thoại, email, địa chỉ, okres, ngày mua, ghi chú, khiếu nại…">
       <select id="fGroup"><option value="">— Tất cả nhóm —</option></select>
       <select id="fOkres"><option value="">— Tất cả okres —</option></select>
-      <select id="fOz" class="hidden"><option value="">— Tất cả OZ —</option><option value="NAM">NAM</option><option value="AHUY">AHUY</option></select>
+      <select id="fOz" class="hidden"><option value="">— Tất cả OZ —</option><option value="NAM">NAM</option><option value="AHUY">AHUY</option><option value="TIEN">TIEN</option></select>
       <select id="fFlag">
         <option value="">— Tất cả —</option>
         <option value="over">Quá hạn thăm</option>
@@ -287,6 +287,8 @@ const S = {
   sha:{}, dirty:false, timer:null, syncing:false, retry:0,
   sort:"priorita", dir:1, highlight:null
 };
+/* Danh sách obchodní zástupce — phải khớp keys.json và build_db.py */
+const OZ_LIST = ["NAM","AHUY","TIEN"];
 const GROUP_COLOR = {1:"var(--p1)",2:"var(--p2)",3:"var(--p3)",4:"var(--p4)",5:"var(--p5)",6:"var(--p6)",7:"var(--p7)"};
 
 /* Nhóm khách — phải khớp GROUPS / GROUP_LABEL trong scripts/build_db.py.
@@ -925,7 +927,7 @@ function buildFilters(){
     os.map(o=>`<option value="${esc(o)}">${esc(o)} (${cnt(c=>c.okres===o)})</option>`).join("");
 
   $("#fOz").innerHTML = `<option value="">— Tất cả OZ — (${src.length})</option>`+
-    ["NAM","AHUY"].map(z=>`<option value="${z}">${z} (${cnt(c=>c.obchodni_zastupce===z)})</option>`).join("");
+    OZ_LIST.map(z=>`<option value="${z}">${z} (${cnt(c=>c.obchodni_zastupce===z)})</option>`).join("");
 
   $("#fFlag").innerHTML =
     `<option value="">— Tất cả — (${src.length})</option>`+
@@ -993,8 +995,7 @@ function renderCust(){
   parts.push(filtered ? `<b>${list.length}</b> / ${base} khách` : `<b>${base}</b> khách`);
   if(over) parts.push(`<span style="color:var(--dang)">${over} quá hạn</span>`);
   if(S.user.role==="admin" && !$("#fOz").value){
-    const n = list.filter(c=>c.obchodni_zastupce==="NAM").length;
-    parts.push(`NAM ${n} · AHUY ${list.length-n}`);
+    parts.push(OZ_LIST.map(z=>`${z} ${list.filter(c=>c.obchodni_zastupce===z).length}`).join(" · "));
   }
   $("#custCount").innerHTML = parts.join(" · ") + (filtered ? ` <span class="muted">(đang lọc)</span>` : "");
 
@@ -1002,8 +1003,7 @@ function renderCust(){
     const od = c.po_terminu_dni>0;
     const ozSel = S.user.role==="admin"
       ? `<select data-oz="${c.id}" style="padding:2px 4px;font-size:12px">
-           <option ${c.obchodni_zastupce==="NAM"?"selected":""}>NAM</option>
-           <option ${c.obchodni_zastupce==="AHUY"?"selected":""}>AHUY</option>
+           ${OZ_LIST.map(z=>`<option ${c.obchodni_zastupce===z?"selected":""}>${z}</option>`).join("")}
          </select>${c.oz_rucne?'<div class="small muted">sửa tay</div>':""}`
       : esc(c.obchodni_zastupce);
     return `<tr data-id="${c.id}" class="${S.highlight===c.id?"hl":""}">
