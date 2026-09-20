@@ -59,6 +59,8 @@ td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .cellbox{min-width:200px;max-width:340px;border:1px dashed transparent;border-radius:6px;padding:3px 5px;cursor:text}
 .cellbox:hover{border-color:var(--line);background:#141b25}
 .cellbox.empty{color:#4a5665;font-style:italic}
+.hist{border-left:2px solid var(--line);margin:5px 0 0 3px;padding:2px 0 2px 7px;font-size:11px;color:var(--tx2)}
+.hist .ht{color:var(--tx);opacity:.8}
 .ed{width:100%;min-height:70px;resize:vertical}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
 .chip{background:#243040;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:11px}
@@ -803,6 +805,19 @@ window.addEventListener("beforeunload", e=>{ if(S.dirty){ e.preventDefault(); e.
 /* ===================== operace nad úkoly ===================== */
 function taskOf(custId, type){ return S.tasks.find(t=>t.cust_id===custId && t.type===type); }
 
+/* Tất cả ghi chú/khiếu nại của khách — đang mở (tasks.json) + đã Hotovo (completed.json),
+   mới nhất lên trước. Ngày = ngày liên lạc OZ nhập tay, để trống thì ngày ghi / ngày Hotovo. */
+function notesOf(custId, type){
+  const seen = new Set(), out = [];
+  S.tasks.concat(S.done).forEach(t=>{
+    if(t.cust_id!==custId || t.type!==type || t._deleted || seen.has(t.id)) return;
+    seen.add(t.id);
+    out.push({t, d:(taskKontakt(t)||{}).d || "", hotovo:!!t.done_at});
+  });
+  return out.sort((a,b)=> b.d.localeCompare(a.d)
+    || (b.t.updated_at||"").localeCompare(a.t.updated_at||""));
+}
+
 /* kontakt = ngày liên lạc OZ nhập tay trong ghi chú ("" = để trống, lấy ngày ghi) */
 function setTask(cust, type, text, kontakt){
   text = (text||"").trim();
@@ -956,18 +971,31 @@ function kontaktCell(c){
 
 function noteCell(c, type){
   const t = taskOf(c.id, type);
-  const cls = type==="rekl" ? "rekl" : "pozn";
-  if(!t) return `<div class="cellbox empty" data-ed="${c.id}|${type}">+ thêm…</div>`;
-  const files = (t.files||[]).map((f,i)=>`<span class="chip" style="cursor:pointer" data-file="${t.id}|${i}">📎 ${esc(f.name)}</span>`).join("");
-  const k = type==="pozn" ? taskKontakt(t) : null;
-  return `<div class="cellbox" data-ed="${c.id}|${type}">${esc(t.text).replace(/\n/g,"<br>")}</div>
-    <div class="chips">${files}</div>
+  const chips = x => (x.files||[]).map((f,i)=>
+    `<span class="chip" style="cursor:pointer" data-file="${x.id}|${i}">📎 ${esc(f.name)}</span>`).join("");
+  const k = (t && type==="pozn") ? taskKontakt(t) : null;
+  const open = !t
+    ? `<div class="cellbox empty" data-ed="${c.id}|${type}">+ thêm…</div>`
+    : `<div class="cellbox" data-ed="${c.id}|${type}">${esc(t.text).replace(/\n/g,"<br>")}</div>
+    <div class="chips">${chips(t)}</div>
     ${k?`<div class="small" style="color:var(--ok)">📅 liên lạc ${fmtD(k.d)}${k.rucne?"":" (ngày ghi)"}</div>`:""}
     <div class="small muted">${esc(t.updated_by||t.created_by)} · ${fmtDT(t.updated_at||t.created_at)}</div>
     <div class="row small" style="margin-top:3px">
       <button class="ok" style="padding:2px 8px;font-size:11px" data-done="${t.id}">Hotovo</button>
       <label class="chip" style="cursor:pointer">📎 file<input type="file" class="hidden" data-up="${t.id}"></label>
     </div>`;
+  if(type!=="pozn") return open;
+  /* Luôn hiện 2 ghi chú mới nhất: ghi chú đang mở + ghi chú đã Hotovo gần nhất
+     (chưa có ghi chú đang mở → 2 ghi chú đã Hotovo gần nhất). */
+  const hist = notesOf(c.id, type).filter(n=>!t || n.t.id!==t.id).slice(0, t?1:2);
+  return open + hist.map(n=>{
+    const by = n.t.done_by || n.t.updated_by || n.t.created_by || "";
+    return `<div class="hist">
+      <div>📅 ${fmtD(n.d)||"—"}${n.hotovo?" · ✓ hotovo":""}${by?" · "+esc(by):""}</div>
+      <div class="ht">${esc(n.t.text).replace(/\n/g,"<br>")}</div>
+      ${(n.t.files||[]).length?`<div class="chips">${chips(n.t)}</div>`:""}
+    </div>`;
+  }).join("");
 }
 
 /* Cột "Nhóm": NAM sửa được bằng dropdown, AHUY chỉ xem. */
