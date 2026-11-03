@@ -251,7 +251,7 @@ PREFIX_MAP = {
     "736":"Karviná","737":"Karviná","738":"Frýdek-Místek","739":"Frýdek-Místek",
     "742":"Nový Jičín","743":"Nový Jičín","744":"Nový Jičín","745":"Nový Jičín",
     "746":"Opava","747":"Opava","748":"Opava","749":"Opava","750":"Přerov","751":"Přerov",
-    "752":"Přerov","753":"Přerov","756":"Vsetín","757":"Vsetín","758":"Vsetín",
+    "752":"Přerov","753":"Přerov","755":"Vsetín","756":"Vsetín","757":"Vsetín","758":"Vsetín",
     "760":"Zlín","763":"Zlín","765":"Zlín","766":"Zlín","767":"Kroměříž","768":"Kroměříž",
     "769":"Kroměříž","770":"Olomouc","772":"Olomouc","779":"Olomouc","783":"Olomouc",
     "784":"Olomouc","785":"Olomouc","787":"Šumperk","788":"Šumperk","789":"Šumperk",
